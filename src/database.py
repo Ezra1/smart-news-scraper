@@ -1,6 +1,9 @@
 import os
 import psycopg2
+from datetime import datetime
 from dotenv import load_dotenv
+import json
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -107,6 +110,48 @@ def insert_search_term(term):
             conn.close()
     return None
 
+# Load search terms from JSON file
+def load_search_terms_from_json(json_file_path):
+    """Load search terms from a JSON file."""
+    try:
+        with open(json_file_path, 'r') as file:
+            data = json.load(file)
+            return data.get("terms", [])
+    except Exception as e:
+        print(f"Error loading search terms from JSON: {e}")
+        return []
+
+# Function to clear the search_terms table and populate it with JSON data
+def refresh_search_terms():
+    """Clear the search_terms table and populate it with data from config/search_terms.json."""
+    conn = get_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            
+            # Clear the search_terms table
+            cur.execute("DELETE FROM search_terms;")
+            conn.commit()
+            print("Cleared existing search terms.")
+
+            # Load new search terms from JSON
+            json_file_path = os.path.join("config", "search_terms.json")
+            search_terms = load_search_terms_from_json(json_file_path)
+            
+            # Insert each search term into the database
+            for term in search_terms:
+                cur.execute("""
+                    INSERT INTO search_terms (term) VALUES (%s);
+                """, (term,))
+            conn.commit()
+            print(f"Inserted {len(search_terms)} new search terms.")
+
+            cur.close()
+        except Exception as e:
+            print(f"Error refreshing search terms: {e}")
+        finally:
+            conn.close()
+
 def get_search_terms():
     """Retrieve all search terms from the search_terms table."""
     conn = get_connection()
@@ -122,3 +167,49 @@ def get_search_terms():
         finally:
             conn.close()
     return []
+
+def is_win1252_compatible(text):
+    """Check if a text string is compatible with Win-1252 encoding."""
+    try:
+        text.encode('cp1252')
+        return True
+    except UnicodeEncodeError:
+        return False
+
+def filter_non_win1252_chars(text):
+    """Filter out non-Windows-1252 characters from a text string."""
+    return text.encode('cp1252', errors='ignore').decode('cp1252')
+
+def insert_raw_article(search_term_id, title, content, source, url, urlToImage, published_at):
+    """Insert a raw article into the raw_articles table, checking for Win-1252 compatibility."""
+    conn = get_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            
+            # Convert published_at to datetime if it's in ISO format
+            if published_at:
+                published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+            
+            # Check Win-1252 compatibility for title and content
+            if not is_win1252_compatible(title):
+                title = filter_non_win1252_chars(title)
+            if not is_win1252_compatible(content):
+                content = filter_non_win1252_chars(content)
+            
+            # Insert the article into the raw_articles table
+            cur.execute("""
+                INSERT INTO raw_articles (search_term_id, title, content, source, url, urlToImage, published_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;
+            """, (search_term_id, title, content, source, url, urlToImage, published_at))
+            
+            article_id = cur.fetchone()[0]  # Get the ID of the inserted article
+            conn.commit()
+            cur.close()
+            return article_id
+        except Exception as e:
+            print(f"Error inserting raw article: {e}")
+        finally:
+            conn.close()
+    return None
+
