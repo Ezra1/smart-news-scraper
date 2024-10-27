@@ -135,7 +135,7 @@ def refresh_search_terms():
             print("Cleared existing search terms.")
 
             # Load new search terms from JSON
-            json_file_path = os.path.join("config", "search_terms.json")
+            json_file_path = os.path.join("config", "search_terms copy.json")
             search_terms = load_search_terms_from_json(json_file_path)
             
             # Insert each search term into the database
@@ -213,3 +213,75 @@ def insert_raw_article(search_term_id, title, content, source, url, urlToImage, 
             conn.close()
     return None
 
+def get_articles(article_id=None):
+    """
+    Retrieve article(s) from the raw_articles table. 
+    If article_id is provided, retrieve a single article; otherwise, retrieve all articles.
+    """
+    conn = get_connection()
+    articles = []
+
+    if conn:
+        try:
+            cur = conn.cursor()
+            if article_id is not None:
+                # Retrieve a single article by ID
+                cur.execute("""
+                    SELECT id, title, content, source, url, urltoimage, published_at
+                    FROM raw_articles
+                    WHERE id = %s;
+                """, (article_id,))
+                row = cur.fetchone()
+                if row:
+                    articles.append({
+                        "id": row[0],
+                        "title": row[1],
+                        "content": row[2],
+                        "source": row[3],
+                        "url": row[4],
+                        "urltoimage": row[5],
+                        "published_at": row[6]
+                    })
+            else:
+                # Retrieve all articles
+                cur.execute("SELECT id, title, content, source, url, urltoimage, published_at FROM raw_articles;")
+                rows = cur.fetchall()
+                for row in rows:
+                    articles.append({
+                        "id": row[0],
+                        "title": row[1],
+                        "content": row[2],
+                        "source": row[3],
+                        "url": row[4],
+                        "urltoimage": row[5],
+                        "published_at": row[6]
+                    })
+            cur.close()
+        except Exception as e:
+            print(f"Error fetching article(s): {e}")
+        finally:
+            conn.close()
+
+    # Return a single dictionary if only one article was requested, otherwise return a list
+    return articles[0] if article_id and articles else articles
+
+
+def insert_cleaned_article(raw_article_id, title, content, source, url, urlToImage, published_at, relevance_score):
+    """Insert a relevant article into the cleaned_articles table."""
+    conn = get_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            
+            # Insert into cleaned_articles
+            cur.execute("""
+                INSERT INTO cleaned_articles (raw_article_id, title, content, source, url, urltoimage, published_at, relevance_score)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+            """, (raw_article_id, title, content, source, url, urlToImage, published_at, relevance_score))
+            
+            conn.commit()
+            cur.close()
+        except Exception as e:
+            print(f"Error inserting cleaned article: {e}")
+        finally:
+            conn.close()
