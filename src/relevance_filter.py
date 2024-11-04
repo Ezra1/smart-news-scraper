@@ -1,17 +1,17 @@
 import os
 import json
-import openai
 import time
 import logging
 from datetime import datetime
 from pathlib import Path
+import re
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from src.database import get_articles, insert_cleaned_article
 from openai import OpenAI
+from src.database import get_articles, insert_cleaned_article
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, filename='batch_processing.log')
+logging.basicConfig(level=logging.INFO, filename='openAIFiles/logs/batch_processing.log')
 
 # Load environment variables
 load_dotenv()
@@ -20,16 +20,16 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Constants
 RELEVANCE_THRESHOLD = 0.7
-BATCH_INPUT_PATH = Path("openAIFiles/batch_input.jsonl")
+BATCH_INPUT_PATH = Path("openAIFiles/input/batch_input.jsonl")
 
-# Define structured response schema using Pydantic
 class RelevanceResponse(BaseModel):
+    """Schema for the relevance response"""
     title: str
     relevance_score: float
 
 def create_jsonl_for_batch(articles):
     """Generate a JSONL file for batch relevance scoring."""
-    with open(BATCH_INPUT_PATH, "w") as jsonl_file:
+    with open(BATCH_INPUT_PATH, "w", encoding="utf-8") as jsonl_file:
         for article in articles:
             article_id, title, content = article["id"], article["title"], article["content"]
             prompt = (
@@ -43,9 +43,9 @@ def create_jsonl_for_batch(articles):
             json_line = {
                 "custom_id": f"article-{article_id}",
                 "method": "POST",
-                "url": "/v1/chat/completions",  # Updated endpoint
+                "url": "/v1/chat/completions",
                 "body": {
-                    "model": "gpt-4o-mini", 
+                    "model": "gpt-4o-mini",
                     "messages": [
                         {"role": "system", "content": "Return the relevance score and title as a JSON object."},
                         {"role": "user", "content": prompt}
@@ -55,7 +55,7 @@ def create_jsonl_for_batch(articles):
                 }
             }
             jsonl_file.write(json.dumps(json_line) + "\n")
-    print("JSONL file created successfully.")
+    logging.info("JSONL file created successfully.")
 
 def upload_jsonl_file():
     """Upload the JSONL file and return the file ID."""
@@ -63,30 +63,24 @@ def upload_jsonl_file():
         with open(BATCH_INPUT_PATH, "rb") as file:
             response = client.files.create(file=file, purpose="batch")
             return response.id
-    except openai.error.InvalidRequestError as e:
-        print(f"Invalid request error while uploading JSONL file: {e}")
-        return None
-    except Exception as e:
-        print(f"Error uploading JSONL file: {e}")
-        return None
+    except Exception as error:  # Broad exception narrowed to catch specific issues later
+        logging.error("Error uploading JSONL file: %s", error)
+    return None
 
 def create_batch_job(file_id):
     """Create a batch job using the uploaded JSONL file ID and return the batch ID."""
     try:
         batch = client.batches.create(
             input_file_id=file_id,
-            endpoint="/v1/chat/completions",  # Updated endpoint
+            endpoint="/v1/chat/completions",
             completion_window="24h",
             metadata={"description": "Batch relevance scoring for articles"}
         )
-        print(f"Batch job created with ID: {batch.id}")
+        logging.info("Batch job created with ID: %s", batch.id)
         return batch.id
-    except openai.error.InvalidRequestError as e:
-        print(f"Invalid request error while creating batch job: {e}")
-        return None
-    except Exception as e:
-        print(f"Error creating batch job: {e}")
-        return None
+    except Exception as error:
+        logging.error("Error creating batch job: %s", error)
+    return None
 
 def check_batch_status(batch_id):
     """Check the status of a batch job periodically and retrieve results if completed."""
@@ -95,101 +89,86 @@ def check_batch_status(batch_id):
             batch_status = client.batches.retrieve(batch_id)
             if batch_status.status == "completed":
                 output_file_id = batch_status.output_file_id
-                file_response = client.files.content(f"{output_file_id}")
-                with open(f"openAIFiles/batch_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl") as output_file:
+                output_file_path = (
+                    f"openAIFiles/output/batch_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+                )
+                with open(output_file_path, "w", encoding="utf-8") as output_file:
+                    file_response = client.files.content(output_file_id)
                     output_file.write(file_response.text)
-                    print(f"Output file {output_file} created")
-                # return client.files.download(output_file_id).text
-            elif batch_status.status in ["failed", "expired"]:
-                print(f"Batch job {batch_id} failed or expired.")
+                    logging.info("Output file %s created successfully.", output_file_path)
+                return output_file_path
+            if batch_status.status in ["failed", "expired"]:
+                logging.error("Batch job %s failed or expired.", batch_id)
                 break
-            else:
-                print(f"Batch job {batch_id} is still in progress... Checking again in 5 minutes.")
-                time.sleep(300)  # Polling delay before checking again
-    except Exception as e:
-        print(f"Error checking batch status: {e}")
+            logging.info("Batch job %s in progress... Checking again in 5 minutes.", batch_id)
+            time.sleep(300)
+    except Exception as error:
+        logging.error("Error checking batch status: %s", error)
+    return None
+
+def extract_json_content(content):
+    """Extract and parse JSON content from the model's response."""
+    try:
+        match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        raise ValueError("JSON content not found in expected format.")
+    except json.JSONDecodeError as error:
+        logging.error("JSON decode error: %s", error)
     return None
 
 def process_result(result):
     """Process a single batch result and insert relevant articles into cleaned_articles."""
     try:
         custom_id = result["custom_id"]
-        response_body = result.get("response", {}).get("body", {}).get("choices", [])[0].get("message", {}).get("content", {})
-        relevance_data = json.loads(response_body)  # Parse the response if it's returned as JSON text
+        response_body = result.get("response", {}).get("body", {}).get("choices", [])[0].get("message", {}).get("content", "")
+        relevance_data = extract_json_content(response_body)
 
-        title = relevance_data.get("title")
-        relevance_score = relevance_data.get("relevance_score", 0)
+        if relevance_data:
+            title = relevance_data.get("title")
+            relevance_score = relevance_data.get("relevance_score", 0)
 
-        # Check if the relevance score meets the threshold
-        if relevance_score >= RELEVANCE_THRESHOLD:
-            article_id = int(custom_id.split("-")[1])
+            if relevance_score >= RELEVANCE_THRESHOLD:
+                article_id = int(custom_id.split("-")[1])
+                article_data = get_articles(article_id=article_id)
 
-            # Retrieve full article data by ID
-            article_data = get_articles(article_id=article_id)
-            if article_data:
-                insert_cleaned_article(
-                    raw_article_id=article_data["id"],
-                    title=title,
-                    content=article_data["content"],
-                    source=article_data["source"],
-                    url=article_data["url"],
-                    urlToImage=article_data["urltoimage"],
-                    published_at=article_data["published_at"],
-                    relevance_score=relevance_score
-                )
-                print(f"Inserted relevant article '{title}' with score {relevance_score}.")
+                if article_data:
+                    insert_cleaned_article(
+                        raw_article_id=article_data["id"],
+                        title=title,
+                        content=article_data["content"],
+                        source=article_data["source"],
+                        url=article_data["url"],
+                        urlToImage=article_data["urltoimage"],
+                        published_at=article_data["published_at"],
+                        relevance_score=relevance_score
+                    )
+                    logging.info("Inserted relevant article '%s' with score %s.", title, relevance_score)
+                else:
+                    logging.warning("Article data not found for article ID: %s", article_id)
             else:
-                print(f"Article data not found for article ID: {article_id}")
-        else:
-            print(f"Article '{title}' is not relevant (score: {relevance_score}). Skipping.")
+                logging.info("Article '%s' is not relevant (score: %s). Skipping.", title, relevance_score)
 
-    except json.JSONDecodeError as e:
-        print(f"JSON decode error while processing result for {result['custom_id']}: {e}")
-    except Exception as e:
-        print(f"Error processing result for {result['custom_id']}: {e}")
-
-def upload_batch():
-    """Upload the JSONL file, create a batch job, and process results."""
-    file_id = upload_jsonl_file()
-    if not file_id:
-        print("Failed to upload JSONL file.")
-        return
-
-    batch_id = create_batch_job(file_id)
-    logging.info(f"Batch job started with file: {BATCH_INPUT_PATH}")
-    if not batch_id:
-        print("Failed to create batch job.")
-        return
-    return batch_id
+    except Exception as error:
+        logging.error("Error processing result for %s: %s", custom_id, error)
 
 def main():
-    # Step 1: Retrieve raw articles
-    articles = get_articles()  # assuming get_articles() fetches all articles if no ID is provided
-
-    # Step 2: Create JSONL file for batch processing
+    """Main function to handle batch processing."""
+    articles = get_articles()
     create_jsonl_for_batch(articles)
-   
-    # Step 3: Upload and process batch
-    batch_id = upload_batch()  # Capture batch_id here
+    batch_id = upload_batch()
 
-    if batch_id is None:
-        print("Batch creation failed.")
-        return
-
-    # Step 4: Check batch status and process results
-    results = check_batch_status(batch_id)
-
-    if results:
-        for line in results.strip().splitlines():
-            result = json.loads(line)
-            process_result(result)
+    if batch_id:
+        results_path = check_batch_status(batch_id)
+        if results_path:
+            with open(results_path, "r", encoding="utf-8") as results_file:
+                for line in results_file:
+                    result = json.loads(line)
+                    process_result(result)
+        else:
+            logging.warning("No results to process.")
     else:
-        print("No results to process yet.")
-
-    batch_status = client.batches.retrieve(f"{batch_id}")
-    print(batch_status.errors)
-
-    
+        logging.error("Batch creation failed.")
 
 if __name__ == "__main__":
     main()
