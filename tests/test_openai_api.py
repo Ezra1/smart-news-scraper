@@ -22,7 +22,7 @@ completion = client.chat.completions.create(
 
 print(completion.choices[0].message)
 """
-
+"""
 def list_running_batches():
     try:
         # Retrieve all batches with a limit on the number of results
@@ -46,3 +46,8 @@ def list_running_batches():
 
 # Call the function to check running batches
 list_running_batches()
+"""
+
+list_batches = client.batches.list()
+if not list_batches:
+    print("no batches running")

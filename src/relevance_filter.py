@@ -2,11 +2,16 @@ import os
 import json
 import openai
 import time
+import logging
+import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from src.database import get_articles, insert_cleaned_article
 from openai import OpenAI
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, filename='batch_processing.log')
 
 # Load environment variables
 load_dotenv()
@@ -28,7 +33,7 @@ def create_jsonl_for_batch(articles):
         for article in articles:
             article_id, title, content = article["id"], article["title"], article["content"]
             prompt = (
-                "Please evaluate the relevance of the article below to the topic '[Your Topic]'.\n\n"
+                "Please evaluate the relevance of the article below to the topic 'pharmaceutical security'.\n\n"
                 "Return a JSON object containing:\n"
                 "- 'title': The title of the article\n"
                 "- 'relevance_score': A relevance score from 0 (completely irrelevant) to 1 (highly relevant)\n\n"
@@ -90,15 +95,17 @@ def check_batch_status(batch_id):
             batch_status = client.batches.retrieve(batch_id)
             if batch_status.status == "completed":
                 output_file_id = batch_status.output_file_id
-                return client.files.download(output_file_id).text
+                file_response = client.files.content(f"{output_file_id}")
+                with open(f"openAIFiles/batch_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl") as output_file:
+                    output_file.write(output_file.text)
+                    print(f"Output file {output_file} created")
+                # return client.files.download(output_file_id).text
             elif batch_status.status in ["failed", "expired"]:
                 print(f"Batch job {batch_id} failed or expired.")
                 break
             else:
-                print(f"Batch job {batch_id} is still in progress... Checking again in 30 seconds.")
-                time.sleep(30)  # Polling delay before checking again
-    except openai.error.InvalidRequestError as e:
-        print(f"Invalid request error while checking batch status: {e}")
+                print(f"Batch job {batch_id} is still in progress... Checking again in 5 minutes.")
+                time.sleep(300)  # Polling delay before checking again
     except Exception as e:
         print(f"Error checking batch status: {e}")
     return None
@@ -141,7 +148,7 @@ def process_result(result):
     except Exception as e:
         print(f"Error processing result for {result['custom_id']}: {e}")
 
-def upload_and_process_batch():
+def upload_batch():
     """Upload the JSONL file, create a batch job, and process results."""
     file_id = upload_jsonl_file()
     if not file_id:
@@ -149,17 +156,11 @@ def upload_and_process_batch():
         return
 
     batch_id = create_batch_job(file_id)
+    logging.info(f"Batch job started with file: {BATCH_INPUT_PATH}")
     if not batch_id:
         print("Failed to create batch job.")
         return
-
-    results = check_batch_status(batch_id)
-    if results:
-        for line in results.strip().splitlines():
-            result = json.loads(line)
-            process_result(result)
-    else:
-        print("No results to process yet.")
+    return batch_id
 
 def main():
     # Step 1: Retrieve raw articles
@@ -167,13 +168,28 @@ def main():
 
     # Step 2: Create JSONL file for batch processing
     create_jsonl_for_batch(articles)
-
+   
     # Step 3: Upload and process batch
-    upload_and_process_batch()
+    batch_id = upload_batch()  # Capture batch_id here
 
-    batch_status = client.batches.retrieve("batch_671d999194c4819085e43496c195f043")
+    if batch_id is None:
+        print("Batch creation failed.")
+        return
+
+    # Step 4: Check batch status and process results
+    results = check_batch_status(batch_id)
+
+    if results:
+        for line in results.strip().splitlines():
+            result = json.loads(line)
+            process_result(result)
+    else:
+        print("No results to process yet.")
+
+    batch_status = client.batches.retrieve(f"{batch_id}")
     print(batch_status.errors)
 
+    
 
 if __name__ == "__main__":
     main()
