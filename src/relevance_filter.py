@@ -3,7 +3,7 @@ import json
 import openai
 import time
 import logging
-import datetime
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -20,7 +20,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Constants
 RELEVANCE_THRESHOLD = 0.7
-BATCH_INPUT_PATH = Path("config/batch_input.jsonl")
+BATCH_INPUT_PATH = Path("openAIFiles/batch_input.jsonl")
 
 # Define structured response schema using Pydantic
 class RelevanceResponse(BaseModel):
@@ -97,7 +97,7 @@ def check_batch_status(batch_id):
                 output_file_id = batch_status.output_file_id
                 file_response = client.files.content(f"{output_file_id}")
                 with open(f"openAIFiles/batch_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl") as output_file:
-                    output_file.write(output_file.text)
+                    output_file.write(file_response.text)
                     print(f"Output file {output_file} created")
                 # return client.files.download(output_file_id).text
             elif batch_status.status in ["failed", "expired"]:
