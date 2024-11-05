@@ -4,18 +4,23 @@ import time
 import logging
 from datetime import datetime
 from pathlib import Path
-import re
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from openai import OpenAI
-from src.database import get_articles, insert_cleaned_article
+from src.database import get_articles
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, filename='openAIFiles/logs/batch_processing.log')
+log_file_path = Path("openAIFiles/logs/batch_processing.log")
+log_file_path.parent.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(level=logging.INFO, filename=log_file_path)
 
 # Load environment variables
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    logging.error("OPENAI_API_KEY is missing in environment.")
+    raise ValueError("OPENAI_API_KEY is not set.")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Constants
@@ -33,8 +38,11 @@ def create_jsonl_for_batch(articles):
         for article in articles:
             article_id, title, content = article["id"], article["title"], article["content"]
             prompt = (
-                "Please evaluate the relevance of the article below to the topic 'pharmaceutical security'.\n\n"
+                "Please evaluate the relevance of the article below to the topics 'pharmaceutical security', "
+                "'regulatory compliance', 'international law enforcement coordination', 'data analysis for tracking "
+                "counterfeit products', and 'the development of anti-counterfeiting strategies'.\n\n"
                 "Return a JSON object containing:\n"
+                "- 'id': The ID for the article\n"
                 "- 'title': The title of the article\n"
                 "- 'relevance_score': A relevance score from 0 (completely irrelevant) to 1 (highly relevant)\n\n"
                 f"Article Title: '{title}'\n\nArticle Content: {content}\n\n"
@@ -63,7 +71,7 @@ def upload_jsonl_file():
         with open(BATCH_INPUT_PATH, "rb") as file:
             response = client.files.create(file=file, purpose="batch")
             return response.id
-    except Exception as error:  # Broad exception narrowed to catch specific issues later
+    except Exception as error:
         logging.error("Error uploading JSONL file: %s", error)
     return None
 
@@ -106,69 +114,26 @@ def check_batch_status(batch_id):
         logging.error("Error checking batch status: %s", error)
     return None
 
-def extract_json_content(content):
-    """Extract and parse JSON content from the model's response."""
-    try:
-        match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
-        if match:
-            return json.loads(match.group(1))
-        raise ValueError("JSON content not found in expected format.")
-    except json.JSONDecodeError as error:
-        logging.error("JSON decode error: %s", error)
-    return None
-
-def process_result(result):
-    """Process a single batch result and insert relevant articles into cleaned_articles."""
-    try:
-        custom_id = result["custom_id"]
-        response_body = result.get("response", {}).get("body", {}).get("choices", [])[0].get("message", {}).get("content", "")
-        relevance_data = extract_json_content(response_body)
-
-        if relevance_data:
-            title = relevance_data.get("title")
-            relevance_score = relevance_data.get("relevance_score", 0)
-
-            if relevance_score >= RELEVANCE_THRESHOLD:
-                article_id = int(custom_id.split("-")[1])
-                article_data = get_articles(article_id=article_id)
-
-                if article_data:
-                    insert_cleaned_article(
-                        raw_article_id=article_data["id"],
-                        title=title,
-                        content=article_data["content"],
-                        source=article_data["source"],
-                        url=article_data["url"],
-                        urlToImage=article_data["urltoimage"],
-                        published_at=article_data["published_at"],
-                        relevance_score=relevance_score
-                    )
-                    logging.info("Inserted relevant article '%s' with score %s.", title, relevance_score)
-                else:
-                    logging.warning("Article data not found for article ID: %s", article_id)
-            else:
-                logging.info("Article '%s' is not relevant (score: %s). Skipping.", title, relevance_score)
-
-    except Exception as error:
-        logging.error("Error processing result for %s: %s", custom_id, error)
-
 def main():
     """Main function to handle batch processing."""
     articles = get_articles()
     create_jsonl_for_batch(articles)
-    batch_id = upload_batch()
-
-    if batch_id:
-        results_path = check_batch_status(batch_id)
-        if results_path:
-            with open(results_path, "r", encoding="utf-8") as results_file:
-                for line in results_file:
-                    result = json.loads(line)
-                    process_result(result)
-        else:
-            logging.warning("No results to process.")
+    
+    file_id = upload_jsonl_file()
+    if not file_id:
+        logging.error("Batch file upload failed.")
+        return
+    
+    batch_id = create_batch_job(file_id)
+    if not batch_id:
+        logging.error("Batch job creation failed.")
+        return
+    
+    results_path = check_batch_status(batch_id)
+    if results_path:
+        logging.info("Batch processing completed and output file saved.")
     else:
-        logging.error("Batch creation failed.")
+        logging.error("Batch processing failed or no results available.")
 
 if __name__ == "__main__":
     main()

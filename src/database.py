@@ -163,19 +163,17 @@ def get_search_terms():
             conn.close()
     return []
 
-
-def is_win1252_compatible(text):
-    """Check if a text string is compatible with Win-1252 encoding."""
-    try:
-        text.encode('cp1252')
-        return True
-    except UnicodeEncodeError:
-        return False
-
-
-def filter_non_win1252_chars(text):
-    """Filter out non-Windows-1252 characters from a text string."""
-    return text.encode('cp1252', errors='ignore').decode('cp1252')
+#def is_win1252_compatible(text):
+#    """Check if a text string is compatible with Win-1252 encoding."""
+#    try:
+#        text.encode('cp1252')
+#        return True
+#    except UnicodeEncodeError:
+#        return False
+#
+#def filter_non_win1252_chars(text):
+#    """Filter out non-Windows-1252 characters from a text string."""
+#    return text.encode('cp1252', errors='ignore').decode('cp1252')
 
 
 def insert_raw_article(search_term_id, title, content, source, url, url_to_image, published_at):
@@ -186,10 +184,11 @@ def insert_raw_article(search_term_id, title, content, source, url, url_to_image
             cur = conn.cursor()
             if published_at:
                 published_at = datetime.datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-            if not is_win1252_compatible(title):
-                title = filter_non_win1252_chars(title)
-            if not is_win1252_compatible(content):
-                content = filter_non_win1252_chars(content)
+
+            #if not is_win1252_compatible(title):
+            #    title = filter_non_win1252_chars(title)
+            #if not is_win1252_compatible(content):
+            #    content = filter_non_win1252_chars(content)
 
             cur.execute(
                 "INSERT INTO raw_articles (search_term_id, title, content, source, url, url_to_image, published_at) "
@@ -225,45 +224,25 @@ def insert_cleaned_article(raw_article_id, title, content, source, url, url_to_i
         finally:
             conn.close()
 
-def get_article_data_by_id(article_id):
-    """
-    Retrieve full article data by ID from the raw_articles table.
-
-    Parameters:
-    article_id (int): The ID of the article to retrieve.
-
-    Returns:
-    dict: A dictionary containing the article data if found, else None.
-    """
+def get_articles(article_id=None):
+    """Retrieve articles by ID if provided, otherwise all articles."""
     conn = get_connection()
-    article_data = None
+    articles = []
     if conn:
         try:
             cur = conn.cursor()
-            # Execute the query to fetch article details by ID
-            cur.execute("""
-                SELECT id, title, content, source, url, urltoimage, published_at
-                FROM raw_articles
-                WHERE id = %s;
-            """, (article_id,))  # Note the comma to make it a tuple
-            row = cur.fetchone()
-
-            # If an article is found, map its details to a dictionary
-            if row:
-                article_data = {
-                    "id": row[0],
-                    "title": row[1],
-                    "content": row[2],
-                    "source": row[3],
-                    "url": row[4],
-                    "urltoimage": row[5],
-                    "published_at": row[6]
-                }
-
+            if article_id:
+                cur.execute("SELECT * FROM raw_articles WHERE id = %s;", (article_id,))
+                row = cur.fetchone()
+                articles = [dict(row)] if row else []
+            else:
+                cur.execute("SELECT * FROM raw_articles;")
+                rows = cur.fetchall()
+                articles = [dict(row) for row in rows]
             cur.close()
         except Exception as e:
-            print(f"Error fetching article data for ID {article_id}: {e}")
+            print(f"Error fetching articles: {e}")
         finally:
             conn.close()
+    return articles if article_id is None else (articles[0] if articles else None)
 
-    return article_data
