@@ -1,5 +1,10 @@
 import json
+import logging
+import logging.config
 from src.database import DatabaseManager
+
+logging.config.fileConfig('logging.conf')
+logger = logging.getLogger(__name__)
 
 class SearchTermManager:
     """Manages operations related to search terms, including insertion and batch loading."""
@@ -19,7 +24,7 @@ class SearchTermManager:
                     """, (term,))
                     conn.commit()
             except Exception as e:
-                print(f"Error inserting term '{term}': {e}")
+                logging.error(f"Error inserting term '{term}': {e}")
             finally:
                 conn.close()
 
@@ -34,9 +39,10 @@ class SearchTermManager:
                 # Insert each term into the database
                 for term in terms:
                     self.insert_search_term(term)
+                logging.info("Successfully inserted %s search terms.", {len(terms)})
                 print(f"Successfully inserted {len(terms)} search terms.")
         except Exception as e:
-            print(f"Error processing the JSON file: {e}")
+            logging.error(f"Error processing the JSON file: {e}")
 
 if __name__ == "__main__":
     # Initialize the database manager and search term manager

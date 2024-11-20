@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import logging.config
 import re
 from dotenv import load_dotenv
 from pathlib import Path
@@ -8,10 +9,10 @@ from src.database import DatabaseManager, ArticleManager
 
 # Load environment variables and set up logging
 load_dotenv()
-logging.basicConfig(level=logging.INFO, filename="openAIFiles/logs/filter_processing.log")
+logging.config.fileConfig('logging.conf')
+logger = logging.getLogger(__name__)
 
 # Constants
-RELEVANCE_THRESHOLD = 0.7
 OUTPUT_DIR = Path("openAIFiles/output")
 
 
@@ -24,6 +25,7 @@ class RelevanceFilter:
         self.relevant = 0
         self.irrelevant = 0
         self.max_relevance_score = 0
+        self.RELEVANCE_THRESHOLD = os.getenv("RELEVANCE_THRESHOLD")
 
     def extract_json_content(self, content):
         """Extract and parse JSON content from the model's response."""

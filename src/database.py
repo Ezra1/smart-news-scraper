@@ -1,11 +1,16 @@
 import os
 import json
+import logging 
+import logging.config
+import re
 import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
+logging.config.fileConfig('logging.conf')
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 
@@ -29,13 +34,14 @@ class DatabaseManager:
             )
             return connection
         except psycopg2.Error as error:
-            print(f"Error connecting to the database: {error}")
+            logging.error(f"Error connecting to the database: {error}")
             return None
 
     def execute_query(self, query, params=None, fetch_one=False, fetch_all=False):
-        """Execute a SQL query with optional fetch options."""
+        """Execute a SQL query."""
         conn = self.get_connection()
         if not conn:
+            logging.error("No connection to SQL database")
             return None
         try:
             with conn:
@@ -46,60 +52,74 @@ class DatabaseManager:
                     if fetch_all:
                         return cur.fetchall()
         except psycopg2.Error as error:
-            print(f"Database error: {error}")
+            logging.error(f"Database error: {error}")
         finally:
             conn.close()
 
-    def create_tables(self):
-        """Create necessary tables in the database."""
-        commands = [
-            """
-            CREATE TABLE IF NOT EXISTS search_terms (
-                id SERIAL PRIMARY KEY,
-                term VARCHAR(100) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS raw_articles (
-                id SERIAL PRIMARY KEY,
-                search_term_id INTEGER REFERENCES search_terms(id) ON DELETE CASCADE,
-                title VARCHAR(255) NOT NULL,
-                content TEXT NOT NULL,
-                source VARCHAR(100),
-                url VARCHAR(255),
-                url_to_image VARCHAR(255),
-                published_at TIMESTAMP,
-                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS cleaned_articles (
-                id SERIAL PRIMARY KEY,
-                raw_article_id INTEGER REFERENCES raw_articles(id) ON DELETE CASCADE,
-                relevance_score FLOAT,
-                title VARCHAR(255) NOT NULL,
-                content TEXT NOT NULL,
-                source VARCHAR(100),
-                url VARCHAR(255),
-                url_to_image VARCHAR(255),
-                published_at TIMESTAMP,
-                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS images (
-                id SERIAL PRIMARY KEY,
-                article_id INTEGER REFERENCES cleaned_articles(id) ON DELETE CASCADE,
-                image_url VARCHAR(255) NOT NULL,
-                detected_objects JSONB
-            )
-            """
-        ]
+def create_tables(self):
+    table_names = {
+        "search_terms": "search_terms",
+        "raw_articles": "raw_articles",
+        "cleaned_articles": "cleaned_articles",
+        "images": "images"
+    }
 
-        for command in commands:
+    """Create necessary tables in the database."""
+    commands = [
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_names["search_terms"]} (
+            id SERIAL PRIMARY KEY,
+            term VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_names["raw_articles"]} (
+            id SERIAL PRIMARY KEY,
+            search_term_id INTEGER REFERENCES {table_names["search_terms"]}(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            content TEXT NOT NULL,
+            source VARCHAR(100),
+            url VARCHAR(255),
+            url_to_image VARCHAR(255),
+            published_at TIMESTAMP,
+            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_names["cleaned_articles"]} (
+            id SERIAL PRIMARY KEY,
+            raw_article_id INTEGER REFERENCES {table_names["raw_articles"]}(id) ON DELETE CASCADE,
+            relevance_score FLOAT,
+            title VARCHAR(255) NOT NULL,
+            content TEXT NOT NULL,
+            source VARCHAR(100),
+            url VARCHAR(255),
+            url_to_image VARCHAR(255),
+            published_at TIMESTAMP,
+            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_names["images"]} (
+            id SERIAL PRIMARY KEY,
+            article_id INTEGER REFERENCES {table_names["cleaned_articles"]}(id) ON DELETE CASCADE,
+            image_url VARCHAR(255) NOT NULL,
+            detected_objects JSONB
+        )
+        """
+    ]
+
+    # Loop to execute commands and log the creation status
+    for command in commands:
+        try:
             self.execute_query(command)
-        print("Tables created successfully.")
+            table_name = re.search(r'CREATE TABLE IF NOT EXISTS (\w+)', command).group(1)
+            logging.info("Created table: %s", table_name)
+        except Exception as error:
+            logging.error("Error creating table: %s", error)
+    
+    print("Tables created successfully.")
 
 
 class SearchTermManager:
@@ -114,14 +134,14 @@ class SearchTermManager:
 
         # Clear existing terms
         self.db_manager.execute_query("DELETE FROM search_terms;")
-        print("Cleared existing search terms.")
+        logging.info("Cleared existing search terms.")
 
         # Insert new terms
         for term in search_terms:
             self.db_manager.execute_query(
                 "INSERT INTO search_terms (term) VALUES (%s);", (term,)
             )
-        print(f"Inserted {len(search_terms)} new search terms.")
+        logging.info(f"Inserted {len(search_terms)} new search terms.")
 
     @staticmethod
     def load_search_terms_from_json(json_file_path):
@@ -131,7 +151,7 @@ class SearchTermManager:
                 data = json.load(file)
                 return data.get("terms", [])
         except (IOError, json.JSONDecodeError) as error:
-            print(f"Error loading search terms from JSON: {error}")
+            logging.error(f"Error loading search terms from JSON: {error}")
             return []
 
 

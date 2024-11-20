@@ -1,15 +1,16 @@
-"""news_scraper.py: Contains logic for scraping news articles from an API like NewsAPI.
-Calls the news API based on search terms from search_terms.json."""
-"""news_scraper.py: Contains logic for scraping news articles from an API like NewsAPI.
+"""news_scraper.py: Contains logic for scraping news articles from NewsAPI.
 Calls the news API based on search terms from search_terms.json."""
 
 import os
 import sys
 import requests
+import logging
+import logging.config
 from dotenv import load_dotenv
 from .database import DatabaseManager, ArticleManager
 
-# Load environment variables
+logging.config.fileConfig('logging.conf')
+logger = logging.getLogger(__name__)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
 
@@ -25,6 +26,7 @@ class NewsScraper:
 
         # Ensure API key and URL are loaded properly
         if not self.NEWS_API_KEY or not self.NEWS_API_URL:
+            logging.error("NEWS_API_KEY and NEWS_API_URL must be set in your environment variables.")
             raise ValueError("NEWS_API_KEY and NEWS_API_URL must be set in your environment variables.")
 
     def fetch_articles_for_term(self, search_term):
@@ -42,7 +44,7 @@ class NewsScraper:
                 response = requests.get(self.NEWS_API_URL, params=params)  # Fix: use self to reference the instance variable
 
                 if response.status_code != 200:
-                    print(f"Error fetching articles for '{search_term}': {response.status_code}")
+                    logging.error(f"Error fetching articles for '{search_term}': {response.status_code}")
                     break
 
                 data = response.json()
@@ -55,25 +57,25 @@ class NewsScraper:
                     params["page"] += 1  # Move to the next page
 
             except requests.RequestException as e:
-                print(f"Request exception occurred while fetching articles for '{search_term}': {e}")
+                logging.error(f"Request exception occurred while fetching articles for '{search_term}': {e}")
                 break
 
         return articles
 
     def scrape_articles(self):
         """Main function to fetch and store articles for each search term."""
-        search_terms = self.db_manager.get_search_terms()
+        search_terms = self.db_manager.get_search_terms() 
 
         if not search_terms:
-            print("No search terms found to scrape articles.")
+            logging.error("No search terms found to scrape articles.")
             return
 
         for term_id, search_term in search_terms:
-            print(f"Scraping articles for search term: {search_term}")
+            logging.info(f"Scraping articles for search term: {search_term}")
             articles = self.fetch_articles_for_term(search_term)
 
             if not articles:
-                print(f"No articles found for term '{search_term}'.")
+                logging.error(f"No articles found for term '{search_term}'.")
                 continue
 
             for article in articles:
@@ -86,7 +88,7 @@ class NewsScraper:
                     url_to_image=article.get("urlToImage", ""),
                     published_at=article.get("publishedAt")
                 )
-            print(f"Stored {len(articles)} articles for term '{search_term}'.")
+            logging.info(f"Stored {len(articles)} articles for term '{search_term}'.")
 
 if __name__ == "__main__":
     # Initialize database manager and article manager
