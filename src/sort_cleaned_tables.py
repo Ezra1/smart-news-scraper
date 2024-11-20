@@ -9,7 +9,12 @@ from src.database import DatabaseManager, ArticleManager
 
 # Load environment variables and set up logging
 load_dotenv()
-logging.config.fileConfig('logging.conf')
+# Get the absolute path to the logging.conf file
+current_directory = os.path.dirname(os.path.abspath(__file__))
+logging_config_path = os.path.join(current_directory, '..', 'config', 'logging.conf')
+
+# Set up logging
+logging.config.fileConfig(logging_config_path)
 logger = logging.getLogger(__name__)
 
 # Constants

@@ -11,7 +11,12 @@ from openai import OpenAI
 from src.database import get_articles
 
 # Load environment variables and set up logging
-logging.config.fileConfig('logging.conf')
+# Get the absolute path to the logging.conf file
+current_directory = os.path.dirname(os.path.abspath(__file__))
+logging_config_path = os.path.join(current_directory, '..', 'config', 'logging.conf')
+
+# Set up logging
+logging.config.fileConfig(logging_config_path)
 logger = logging.getLogger(__name__)
 load_dotenv()
 

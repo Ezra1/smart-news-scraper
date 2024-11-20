@@ -1,10 +1,17 @@
 import sys
 import os
 
-# Add the root directory to the Python path to make `src` available
+# Add the root directory to the Python path to access files in src
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.database import ArticleManager  # Import after adding to the path
+# Import the necessary classes
+from src.database import DatabaseManager, ArticleManager
+
+# Create an instance of DatabaseManager
+db_manager = DatabaseManager()
+
+# Create an instance of ArticleManager and pass the db_manager instance
+article_manager = ArticleManager(db_manager)
 
 # Sample data to test the function
 search_term_id = 1
@@ -15,10 +22,7 @@ url = "https://example.com/sample-article"
 url_to_image = "https://example.com/image.jpg"
 published_at = "2024-06-29T09:00:00Z"
 
-# Create an instance of ArticleManager if insert_raw_article is not a classmethod
-article_manager = ArticleManager()
-
-# Insert the article using the instance of ArticleManager
+# Insert the article
 article_id = article_manager.insert_raw_article(
     search_term_id, title, content, source, url, url_to_image, published_at
 )

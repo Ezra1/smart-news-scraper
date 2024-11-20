@@ -9,7 +9,12 @@ import logging.config
 from dotenv import load_dotenv
 from .database import DatabaseManager, ArticleManager
 
-logging.config.fileConfig('logging.conf')
+# Get the absolute path to the logging.conf file
+current_directory = os.path.dirname(os.path.abspath(__file__))
+logging_config_path = os.path.join(current_directory, '..', 'config', 'logging.conf')
+
+# Set up logging
+logging.config.fileConfig(logging_config_path)
 logger = logging.getLogger(__name__)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
