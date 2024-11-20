@@ -11,10 +11,8 @@ load_dotenv()
 # Database connection parameters
 DB_NAME = os.getenv("DB_NAME")
 DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))  # Correct default type to str
-
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
 
 def get_connection():
     """Establish and return a connection to the PostgreSQL database."""
@@ -22,7 +20,6 @@ def get_connection():
         connection = psycopg2.connect(
             dbname=DB_NAME,
             user=DB_USER,
-            password=DB_PASSWORD,
             host=DB_HOST,
             port=DB_PORT
         )
@@ -35,13 +32,14 @@ def get_connection():
 def create_tables():
     """Create necessary tables in the database."""
     commands = (
+        # Table to store the search terms for easy batch job processing.
         """
         CREATE TABLE IF NOT EXISTS search_terms (
             id SERIAL PRIMARY KEY,
             term VARCHAR(100) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """,
+        """, # Table to hold the articles recieved from NewsAPI before sending off to ChatGPT
         """
         CREATE TABLE IF NOT EXISTS raw_articles (
             id SERIAL PRIMARY KEY,
@@ -50,11 +48,11 @@ def create_tables():
             content TEXT NOT NULL,
             source VARCHAR(100),
             url VARCHAR(255),
-            url_to_image VARCHAR(255),  # Changed to snake_case
+            url_to_image VARCHAR(255),
             published_at TIMESTAMP,
             scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """,
+        """, # Table to hold the articles deemed relevant by ChatGPT
         """
         CREATE TABLE IF NOT EXISTS cleaned_articles (
             id SERIAL PRIMARY KEY,
@@ -68,7 +66,7 @@ def create_tables():
             published_at TIMESTAMP,
             scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-        """,
+        """, # TBD
         """
         CREATE TABLE IF NOT EXISTS images (
             id SERIAL PRIMARY KEY,
@@ -92,7 +90,6 @@ def create_tables():
             print(f"Error creating tables: {error}")
         finally:
             conn.close()
-
 
 def insert_search_term(term):
     """Insert a single search term into the search_terms table."""

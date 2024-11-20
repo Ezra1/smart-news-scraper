@@ -9,7 +9,7 @@ NEWS_API_URL = "https://newsapi.org/v2/everything"
 
 def test_news_api():
     """Test function to check if the News API is working."""
-    search_term = "sample news"  # Example search term
+    search_term = "pharmaceutical security"  # Example search term
     params = {
         "q": search_term,
         "apiKey": NEWS_API_KEY,
