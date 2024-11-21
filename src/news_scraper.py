@@ -7,7 +7,7 @@ import requests
 import logging
 import logging.config
 from dotenv import load_dotenv
-from .database import DatabaseManager, ArticleManager
+from .database import DatabaseManager, ArticleManager, SearchTermManager
 
 # Get the absolute path to the logging.conf file
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -22,14 +22,14 @@ sys.path.append(project_root)
 class NewsScraper:
     """Handles scraping articles from the News API."""
 
-    def __init__(self, db_manager, article_manager):
+    def __init__(self, db_manager):
         load_dotenv()
-        self.db_manager = db_manager
-        self.article_manager = article_manager
+        self.db_manager = db_manager  # Use the passed in db_manager
+        self.article_manager = ArticleManager(db_manager)  # Initialize article_manager
+        self.search_term_manager = SearchTermManager(db_manager)
         self.NEWS_API_KEY = os.getenv("NEWS_API_KEY")
         self.NEWS_API_URL = os.getenv("NEWS_API_URL")
-
-        # Ensure API key and URL are loaded properly
+    
         if not self.NEWS_API_KEY or not self.NEWS_API_URL:
             logging.error("NEWS_API_KEY and NEWS_API_URL must be set in your environment variables.")
             raise ValueError("NEWS_API_KEY and NEWS_API_URL must be set in your environment variables.")
@@ -69,40 +69,20 @@ class NewsScraper:
 
     def scrape_articles(self):
         """Main function to fetch and store articles for each search term."""
-        search_terms = self.db_manager.get_search_terms() 
-
+        search_terms = self.search_term_manager.get_search_terms() 
+    
         if not search_terms:
             logging.error("No search terms found to scrape articles.")
             return
-
-        for term_id, search_term in search_terms:
+    
+        for term in search_terms:
+            term_id = term['id']
+            search_term = term['term']
             logging.info(f"Scraping articles for search term: {search_term}")
-            articles = self.fetch_articles_for_term(search_term)
-
-            if not articles:
-                logging.error(f"No articles found for term '{search_term}'.")
-                continue
-
-            for article in articles:
-                self.article_manager.insert_raw_article(
-                    search_term_id=term_id,
-                    title=article["title"],
-                    content=article.get("content", ""),
-                    source=article["source"]["name"] if article.get("source") else "",
-                    url=article["url"],
-                    url_to_image=article.get("urlToImage", ""),
-                    published_at=article.get("publishedAt")
-                )
-            logging.info(f"Stored {len(articles)} articles for term '{search_term}'.")
 
 if __name__ == "__main__":
-    # Initialize database manager and article manager
+    # Initialize NewsScraper
     db_manager = DatabaseManager()
     article_manager = ArticleManager(db_manager)
-
-    # Initialize NewsScraper
     news_scraper = NewsScraper(db_manager, article_manager)
-
-    # Refresh search terms and scrape articles
-    db_manager.refresh_search_terms()
     news_scraper.scrape_articles()

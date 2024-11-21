@@ -8,7 +8,7 @@ OpenAI.api_key = OPENAI_API_KEY
 
 client = OpenAI()
 """
-"For checking if the OpenAI call works"
+# For checking if the OpenAI call works
 completion = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[
@@ -21,7 +21,7 @@ completion = client.chat.completions.create(
 )
 
 print(completion.choices[0].message)
-"""
+
 """
 def list_running_batches():
     try:
@@ -46,7 +46,7 @@ def list_running_batches():
 
 # Call the function to check running batches
 list_running_batches()
-"""
+
 
 list_batches = client.batches.list()
 if not list_batches:

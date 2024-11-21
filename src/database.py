@@ -8,9 +8,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-# Get the absolute path to the logging.conf file
+# Get the absolute path to the logging.conf and search_terms.json files
 current_directory = os.path.dirname(os.path.abspath(__file__))
 logging_config_path = os.path.join(current_directory, '..', 'config', 'logging.conf')
+search_terms_path = os.path.join(current_directory, '..', "config", "search_terms.json")
 
 # Set up logging
 logging.config.fileConfig(logging_config_path)
@@ -60,70 +61,82 @@ class DatabaseManager:
         finally:
             conn.close()
 
-def create_tables(self):
-    table_names = {
-        "search_terms": "search_terms",
-        "raw_articles": "raw_articles",
-        "cleaned_articles": "cleaned_articles",
-        "images": "images"
-    }
+    def create_tables(self):
+        """Create necessary tables in the database."""
+        table_names = {
+            "search_terms": "search_terms",
+            "raw_articles": "raw_articles",
+            "cleaned_articles": "cleaned_articles",
+            "images": "images"
+        }
 
-    """Create necessary tables in the database."""
-    commands = [
-        f"""
-        CREATE TABLE IF NOT EXISTS {table_names["search_terms"]} (
-            id SERIAL PRIMARY KEY,
-            term VARCHAR(100) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        f"""
-        CREATE TABLE IF NOT EXISTS {table_names["raw_articles"]} (
-            id SERIAL PRIMARY KEY,
-            search_term_id INTEGER REFERENCES {table_names["search_terms"]}(id) ON DELETE CASCADE,
-            title VARCHAR(255) NOT NULL,
-            content TEXT NOT NULL,
-            source VARCHAR(100),
-            url VARCHAR(255),
-            url_to_image VARCHAR(255),
-            published_at TIMESTAMP,
-            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        f"""
-        CREATE TABLE IF NOT EXISTS {table_names["cleaned_articles"]} (
-            id SERIAL PRIMARY KEY,
-            raw_article_id INTEGER REFERENCES {table_names["raw_articles"]}(id) ON DELETE CASCADE,
-            relevance_score FLOAT,
-            title VARCHAR(255) NOT NULL,
-            content TEXT NOT NULL,
-            source VARCHAR(100),
-            url VARCHAR(255),
-            url_to_image VARCHAR(255),
-            published_at TIMESTAMP,
-            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        f"""
-        CREATE TABLE IF NOT EXISTS {table_names["images"]} (
-            id SERIAL PRIMARY KEY,
-            article_id INTEGER REFERENCES {table_names["cleaned_articles"]}(id) ON DELETE CASCADE,
-            image_url VARCHAR(255) NOT NULL,
-            detected_objects JSONB
-        )
-        """
-    ]
+        commands = [
+            f"""
+            CREATE TABLE IF NOT EXISTS {table_names["search_terms"]} (
+                id SERIAL PRIMARY KEY,
+                term VARCHAR(100) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {table_names["raw_articles"]} (
+                id SERIAL PRIMARY KEY,
+                search_term_id INTEGER REFERENCES {table_names["search_terms"]}(id) ON DELETE CASCADE,
+                title VARCHAR(255) NOT NULL,
+                content TEXT NOT NULL,
+                source VARCHAR(100) NOT NULL,
+                url VARCHAR(2048) NOT NULL UNIQUE,  -- Standard maximum URL length
+                url_to_image VARCHAR(2048),
+                published_at TIMESTAMP NOT NULL,
+                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {table_names["cleaned_articles"]} (
+                id SERIAL PRIMARY KEY,
+                raw_article_id INTEGER REFERENCES {table_names["raw_articles"]}(id) ON DELETE CASCADE,
+                relevance_score FLOAT CHECK (relevance_score >= 0 AND relevance_score <= 1),
+                title VARCHAR(255) NOT NULL,
+                content TEXT NOT NULL,
+                source VARCHAR(100) NOT NULL,
+                url VARCHAR(2048) NOT NULL UNIQUE,
+                url_to_image VARCHAR(2048),
+                published_at TIMESTAMP NOT NULL,
+                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {table_names["images"]} (
+                id SERIAL PRIMARY KEY,
+                article_id INTEGER REFERENCES {table_names["cleaned_articles"]}(id) ON DELETE CASCADE,
+                image_url VARCHAR(2048) NOT NULL,
+                detected_objects JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        ]
 
-    # Loop to execute commands and log the creation status
-    for command in commands:
-        try:
-            self.execute_query(command)
-            table_name = re.search(r'CREATE TABLE IF NOT EXISTS (\w+)', command).group(1)
-            logging.info("Created table: %s", table_name)
-        except Exception as error:
-            logging.error("Error creating table: %s", error)
-    
-    print("Tables created successfully.")
+        success = True
+        for command in commands:
+            try:
+                self.execute_query(command)
+                match = re.search(r'CREATE TABLE IF NOT EXISTS (\w+)', command)
+                if match:
+                    table_name = match.group(1)
+                    logging.info("Created table: %s", table_name)
+                else:
+                    logging.warning("Could not find table name in command: %s", command)
+            except Exception as error:
+                success = False
+                logging.error("Error creating table: %s", error)
+                raise  # Re-raise the exception to handle it at a higher level
+
+        if success:
+            logging.info("All tables created successfully")
+            print("Tables created successfully.")
+        else:
+            logging.error("Failed to create all tables")
+            print("Error occurred while creating tables. Check logs for details.")
 
 
 class SearchTermManager:
@@ -132,20 +145,27 @@ class SearchTermManager:
     def __init__(self, db_manager):
         self.db_manager = db_manager
 
-    def refresh_search_terms(self, json_file_path):
-        """Clear the search_terms table and populate it with data from a JSON file."""
-        search_terms = self.load_search_terms_from_json(json_file_path)
+    def get_search_terms(self):
+        query = "SELECT id, term FROM search_terms;"
+        return self.db_manager.execute_query(query, fetch_all=True)
 
-        # Clear existing terms
-        self.db_manager.execute_query("DELETE FROM search_terms;")
-        logging.info("Cleared existing search terms.")
+    def refresh_search_terms(self):
+        try: 
+            """Clear the search_terms table and populate it with data from a JSON file."""
+            search_terms = self.load_search_terms_from_json(search_terms_path)
 
-        # Insert new terms
-        for term in search_terms:
-            self.db_manager.execute_query(
-                "INSERT INTO search_terms (term) VALUES (%s);", (term,)
-            )
-        logging.info(f"Inserted {len(search_terms)} new search terms.")
+            # Clear existing terms
+            self.db_manager.execute_query("DELETE FROM search_terms;")
+            logging.info("Cleared existing search terms.")
+
+            # Insert new terms
+            for term in search_terms:
+                self.db_manager.execute_query(
+                    "INSERT INTO search_terms (term) VALUES (%s);", (term,)
+                )
+            logging.info(f"Inserted {len(search_terms)} new search terms.")
+        except Exception as error:
+            logging.error("Error refreshing search terms: %s", error)
 
     @staticmethod
     def load_search_terms_from_json(json_file_path):
@@ -155,7 +175,7 @@ class SearchTermManager:
                 data = json.load(file)
                 return data.get("terms", [])
         except (IOError, json.JSONDecodeError) as error:
-            logging.error(f"Error loading search terms from JSON: {error}")
+            logging.error("Error loading search terms from JSON: %s", error)
             return []
 
 
@@ -166,34 +186,44 @@ class ArticleManager:
         self.db_manager = db_manager
 
     def insert_raw_article(self, search_term_id, title, content, source, url, url_to_image, published_at):
-        """Insert a raw article into the database."""
-        if published_at:
-            published_at = datetime.datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-        query = """
-            INSERT INTO raw_articles (search_term_id, title, content, source, url, url_to_image, published_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;
-        """
-        return self.db_manager.execute_query(
-            query,
-            (search_term_id, title, content, source, url, url_to_image, published_at),
-            fetch_one=True
-        )
+        try:
+            """Insert a raw article into the database."""
+            if published_at:
+                published_at = datetime.datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+            query = """
+                INSERT INTO raw_articles (search_term_id, title, content, source, url, url_to_image, published_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;
+            """
+            return self.db_manager.execute_query(
+                query,
+                (search_term_id, title, content, source, url, url_to_image, published_at),
+                fetch_one=True
+            )
+        except Exception as error:
+            logging.error("Error inserting raw article: %s", error)
+        
 
     def insert_cleaned_article(self, raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score):
-        """Insert a relevant article into the cleaned_articles table."""
-        query = """
-            INSERT INTO cleaned_articles (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
-        """
-        self.db_manager.execute_query(
-            query,
-            (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
-        )
+        try:
+            """Insert a relevant article into the cleaned_articles table."""
+            query = """
+                INSERT INTO cleaned_articles (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+            """
+            self.db_manager.execute_query(
+                query,
+                (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
+            )
+        except Exception as error: 
+            logging.error("Error inserting clean article: %s", error)
 
     def get_articles(self, article_id=None):
-        """Retrieve articles by ID or all articles."""
-        if article_id:
-            query = "SELECT * FROM raw_articles WHERE id = %s;"
-            return self.db_manager.execute_query(query, (article_id,), fetch_one=True)
-        query = "SELECT * FROM raw_articles;"
-        return self.db_manager.execute_query(query, fetch_all=True)
+        try: 
+            """Retrieve articles by ID or all articles."""
+            if article_id:
+                query = "SELECT * FROM raw_articles WHERE id = %s;"
+                return self.db_manager.execute_query(query, (article_id,), fetch_one=True)
+            query = "SELECT * FROM raw_articles;"
+            return self.db_manager.execute_query(query, fetch_all=True)
+        except Exception as error: 
+            logging.error("Error getting articles: %s", error)

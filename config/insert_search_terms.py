@@ -5,7 +5,6 @@ from src.database import DatabaseManager
 
 logging.config.fileConfig('logging.conf')
 logger = logging.getLogger(__name__)
-
 class SearchTermManager:
     """Manages operations related to search terms, including insertion and batch loading."""
 
