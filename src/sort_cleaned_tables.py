@@ -1,3 +1,5 @@
+"""src/sort_cleaned_tables.py"""
+
 import os
 import json
 import logging

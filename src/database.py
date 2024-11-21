@@ -1,12 +1,19 @@
+"""src/database.py"""
+
 import os
 import json
 import logging 
 import logging.config
 import re
 import datetime
-import psycopg2
+from typing import Optional, List, Dict
+from .cache import QueryCache
+from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
+from contextlib import contextmanager
 from dotenv import load_dotenv
+from .duplication import ArticleDeduplicator
+from .validation import ArticleValidator
 
 # Get the absolute path to the logging.conf and search_terms.json files
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -27,39 +34,58 @@ class DatabaseManager:
         self.db_user = os.getenv("DB_USER")
         self.db_host = os.getenv("DB_HOST", "localhost")
         self.db_port = int(os.getenv("DB_PORT", "5432"))
+        self.min_connections = int(os.getenv("DB_MIN_CONNECTIONS", "1"))
+        self.max_connections = int(os.getenv("DB_MAX_CONNECTIONS", "10"))
+        
+        self.pool = SimpleConnectionPool(
+            self.min_connections,
+            self.max_connections,
+            dbname=self.db_name,
+            user=self.db_user,
+            host=self.db_host,
+            port=self.db_port
+        )
+        self.cache = QueryCache()
 
+    @contextmanager
     def get_connection(self):
-        """Establish and return a connection to the PostgreSQL database."""
+        """Get a connection from the pool using context manager."""
+        conn = self.pool.getconn()
         try:
-            connection = psycopg2.connect(
-                dbname=self.db_name,
-                user=self.db_user,
-                host=self.db_host,
-                port=self.db_port
-            )
-            return connection
-        except psycopg2.Error as error:
-            logging.error(f"Error connecting to the database: {error}")
-            return None
+            yield conn
+        finally:
+            self.pool.putconn(conn)
 
     def execute_query(self, query, params=None, fetch_one=False, fetch_all=False):
-        """Execute a SQL query."""
-        conn = self.get_connection()
-        if not conn:
-            logging.error("No connection to SQL database")
-            return None
-        try:
+        """Execute a SQL query with caching."""
+        if params is None:
+            params = tuple()
+        else:
+            params = tuple(params)
+
+        # Only cache SELECT queries
+        if query.strip().upper().startswith('SELECT'):
+            cached_result = self.cache.get(query, params)
+            if cached_result is not None:
+                return cached_result
+
+        # Execute query if no cache hit
+        with self.get_connection() as conn:
             with conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cur:
                     cur.execute(query, params)
                     if fetch_one:
-                        return cur.fetchone()
-                    if fetch_all:
-                        return cur.fetchall()
-        except psycopg2.Error as error:
-            logging.error(f"Database error: {error}")
-        finally:
-            conn.close()
+                        result = cur.fetchone()
+                    elif fetch_all:
+                        result = cur.fetchall()
+                    else:
+                        result = None
+
+                    # Cache the result for SELECT queries
+                    if query.strip().upper().startswith('SELECT'):
+                        self.cache.set(query, params, result)
+                    
+                    return result
 
     def create_tables(self):
         """Create necessary tables in the database."""
@@ -180,50 +206,106 @@ class SearchTermManager:
 
 
 class ArticleManager:
-    """Manages articles in the database."""
-
     def __init__(self, db_manager):
         self.db_manager = db_manager
+        self.deduplicator = ArticleDeduplicator()
+        self.validator = ArticleValidator()
 
-    def insert_raw_article(self, search_term_id, title, content, source, url, url_to_image, published_at):
+    def insert_article(self, article_data: dict, search_term_id: int, database: str) -> Optional[int]:
+        """Insert article after checking for duplicates."""
         try:
-            """Insert a raw article into the database."""
-            if published_at:
-                published_at = datetime.datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+            cleaned_data = self.validator.clean_article(article_data)
+            if not cleaned_data:
+                logging.warning(f"Article validation failed: {article_data.get('title')}")
+                return None
+            # Get recent articles and check for duplicates
+            recent_articles = self.get_recent_articles(days=7)
+            if recent_articles and self.deduplicator.find_duplicates([article_data] + recent_articles):
+                logging.info(f"Duplicate content detected for article: {article_data.get('title')}")
+                return None
+
+            # Process timestamp
+            published_at = None
+            if article_data.get('published_at'):
+                published_at = datetime.datetime.fromisoformat(
+                    article_data['published_at'].replace("Z", "+00:00")
+                )
+
+            # Validate required fields
+            required_fields = ['title', 'content', 'source_name', 'url']
+            if not all(article_data.get(field) for field in required_fields):
+                logging.warning(f"Missing required fields in article: {article_data.get('title')}")
+                return None
+
             query = """
-                INSERT INTO raw_articles (search_term_id, title, content, source, url, url_to_image, published_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;
-            """
-            return self.db_manager.execute_query(
+                INSERT INTO {} 
+                (search_term_id, title, content, source, url, url_to_image, published_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (url) DO UPDATE 
+                SET 
+                    title = EXCLUDED.title,
+                    content = EXCLUDED.content,
+                    published_at = EXCLUDED.published_at
+                RETURNING id;
+            """.format(database)
+
+            article_id = self.db_manager.execute_query(
                 query,
-                (search_term_id, title, content, source, url, url_to_image, published_at),
+                (
+                    search_term_id,
+                    article_data.get('title'),
+                    article_data.get('content'),
+                    article_data.get('source_name'),
+                    article_data.get('url'),
+                    article_data.get('url_to_image'),
+                    published_at
+                ),
                 fetch_one=True
             )
+            
+            if article_id:
+                logging.info(f"Successfully inserted/updated article: {article_data.get('title')}")
+                return article_id['id']
+            return None
+
         except Exception as error:
-            logging.error("Error inserting raw article: %s", error)
-        
+            logging.error(f"Error inserting article into {database}: {error}")
+            return None
 
-    def insert_cleaned_article(self, raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score):
+    def get_recent_articles(self, days: int = 7) -> List[Dict]:
+        """Get articles from the last N days."""
+        query = """
+            SELECT * FROM raw_articles 
+            WHERE published_at >= NOW() - INTERVAL '%s days'
+            ORDER BY published_at DESC;
+        """
+        return self.db_manager.execute_query(query, (days,), fetch_all=True) or []
+
+    def get_articles(self, article_id: Optional[int] = None) -> Optional[Dict]:
+        """Get single article by ID or all articles."""
         try:
-            """Insert a relevant article into the cleaned_articles table."""
-            query = """
-                INSERT INTO cleaned_articles (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
-            """
-            self.db_manager.execute_query(
-                query,
-                (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
-            )
-        except Exception as error: 
-            logging.error("Error inserting clean article: %s", error)
-
-    def get_articles(self, article_id=None):
-        try: 
-            """Retrieve articles by ID or all articles."""
             if article_id:
                 query = "SELECT * FROM raw_articles WHERE id = %s;"
                 return self.db_manager.execute_query(query, (article_id,), fetch_one=True)
-            query = "SELECT * FROM raw_articles;"
+            
+            query = "SELECT * FROM raw_articles ORDER BY published_at DESC;"
             return self.db_manager.execute_query(query, fetch_all=True)
-        except Exception as error: 
-            logging.error("Error getting articles: %s", error)
+            
+        except Exception as error:
+            logging.error(f"Error retrieving articles: {error}")
+            return None
+
+    def delete_article(self, article_id: int) -> bool:
+        """Delete an article by ID."""
+        try:
+            query = "DELETE FROM raw_articles WHERE id = %s RETURNING id;"
+            result = self.db_manager.execute_query(query, (article_id,), fetch_one=True)
+            return bool(result)
+        except Exception as error:
+            logging.error(f"Error deleting article {article_id}: {error}")
+            return False
+
+    def __del__(self):
+        """Cleanup database connections."""
+        if hasattr(self.db_manager, 'pool'):
+            self.db_manager.pool.closeall()

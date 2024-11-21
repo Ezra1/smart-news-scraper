@@ -1,3 +1,5 @@
+"""src/insert_search_terms.py"""
+
 import json
 import logging
 import logging.config
