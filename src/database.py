@@ -211,6 +211,32 @@ class ArticleManager:
         self.deduplicator = ArticleDeduplicator()
         self.validator = ArticleValidator()
 
+    def article_exists(self, url: str, database: str = "raw_articles") -> bool:
+        """
+        Check if an article with the given URL exists in the specified database.
+        
+        Args:
+            url (str): The URL of the article to check
+            database (str): The database table to check ('raw_articles' or 'cleaned_articles')
+        
+        Returns:
+            bool: True if the article exists, False otherwise
+        """
+        try:
+            query = f"""
+                SELECT EXISTS (
+                    SELECT 1 
+                    FROM {database} 
+                    WHERE url = %s
+                );
+            """
+            result = self.db_manager.execute_query(query, (url,), fetch_one=True)
+            return result.get('exists', False) if result else False
+            
+        except Exception as error:
+            logging.error(f"Error checking article existence in {database}: {error}")
+            return False
+    
     def insert_article(self, article_data: dict, search_term_id: int, database: str) -> Optional[int]:
         """Insert article after checking for duplicates."""
         try:

@@ -5,12 +5,15 @@ import sys
 import requests
 import logging
 import logging.config
-import time
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict
 from dotenv import load_dotenv
 from ratelimit import limits, sleep_and_retry
-from .database import DatabaseManager, ArticleManager, SearchTermManager
+
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(project_root)
+
+from src.database import DatabaseManager, ArticleManager, SearchTermManager
 
 # Get the absolute path to the logging.conf file
 current_directory = os.path.dirname(os.path.abspath(__file__))
