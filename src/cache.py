@@ -21,5 +21,5 @@ class QueryCache:
         return None
     
     def set(self, query: str, params: tuple, result: Any) -> None:
-        key = self._make_key(query, params)
-        self._cache[key] = (result, datetime.now())
+        key = self._makte_key(query, params)
+        self._cache[key] = (result, datetime.now()) 
