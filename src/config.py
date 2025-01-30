@@ -18,6 +18,9 @@ DEFAULT_CONFIG = {
     "OUTPUT_DIR": "output"
 }
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 class ConfigManager:
     def __init__(self):
         """Initialize config manager and load config file from the project root."""
@@ -71,6 +74,7 @@ class ConfigManager:
                 logging.StreamHandler()
             ]
         )
+        logger.setLevel(getattr(logging, self.config.get("LOGGING_LEVEL", "INFO")))
 
     def save_config(self, config: Dict[str, Any]) -> None:
         """Save configuration to the main project directory with secure handling."""
@@ -85,7 +89,7 @@ class ConfigManager:
             
             with open(self.config_path, 'w', encoding="utf-8") as f:
                 json.dump(safe_config, f, indent=4)
-        except Exception as e:
+        except (OSError, IOError) as e:
             logging.error(f"Error saving config file: {e}")
 
     def get(self, key: str, default: Any = None) -> Any:

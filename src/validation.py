@@ -5,10 +5,10 @@ import logging
 from dateutil import parser
 from datetime import datetime
 from typing import Dict, Optional, Set
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 from urllib.parse import urlparse, urljoin
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 class ArticleValidator:
@@ -126,6 +126,10 @@ class ArticleValidator:
             if any(char in url for char in ['<', '>', '"', "'", ';', '{', '}']):
                 return False
                 
+            # Ensure URL does not contain dangerous characters in query or fragment
+            if any(char in parsed.query + parsed.fragment for char in ['<', '>', '"', "'", ';', '{', '}']):
+                return False
+                
             return True
             
         except Exception as e:
@@ -187,6 +191,9 @@ class ArticleValidator:
             content = self.clean_text(article.get('content', ''))
             url = article.get('url', '')
             published_at = article.get('published_at', '')
+            url_to_image = article.get('url_to_image', '')
+            if url_to_image and not self.validate_url(url_to_image):
+                url_to_image = None
             
             # Validate required fields
             if not all([title, content, url]):
@@ -211,7 +218,7 @@ class ArticleValidator:
                 'url': url,
                 'published_at': published_at,
                 'source_name': self.clean_text(article.get('source_name', '')),
-                'url_to_image': url if self.validate_url(article.get('url_to_image', '')) else None
+                'url_to_image': url_to_image
             }
             
             logger.info(f"Article cleaned successfully: {title}")

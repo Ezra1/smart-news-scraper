@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
@@ -151,8 +151,8 @@ class ArticleManager:
             article_data['content'],
             source_name,
             article_data['url'],
-            article_data.get('urlToImage'),  # Note: API uses camelCase
-            article_data['publishedAt']  # Note: API uses camelCase
+            article_data.get('urlToImage', ''),  # Ensure default empty string
+            article_data.get('publishedAt', '')  # Ensure default empty string
         )
 
         try:

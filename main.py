@@ -38,7 +38,7 @@ def database_transaction(db: DatabaseManager):
             return self.connection
 
         def __exit__(self, exc_type, exc_val, exc_tb):
-            if exc_type is None:
+            if (exc_type is None):
                 self.connection.commit()
             else:
                 self.connection.rollback()
@@ -80,6 +80,11 @@ async def main():
 
         try:
             search_terms = search_manager.get_search_terms()
+            if not search_terms:
+                logger.error("No search terms found. Exiting.")
+                print("No search terms found. Exiting.")
+                return
+
             print("Fetching articles...")
             articles = await scraper.fetch_all_articles(search_terms)
             if scraper.rate_limited:
@@ -120,6 +125,8 @@ async def main():
         if db is not None:
             db.close()
             logger.info("Database connection closed")
+        else:
+            logger.info("No database connection to close")
 
 if __name__ == "__main__":
     import asyncio

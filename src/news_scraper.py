@@ -1,8 +1,10 @@
 import aiohttp
 import logging
+import asyncio  # Add this import
 from typing import List, Dict
 from config import ConfigManager
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 class NewsArticleScraper:
@@ -11,6 +13,7 @@ class NewsArticleScraper:
         self.api_key = self.config.get("NEWS_API_KEY")
         self.api_url = self.config.get("NEWS_API_URL")
         self.rate_limited = False
+        self.retry_delay = 60  # Add this line to set retry delay
         
     async def fetch_articles(self, search_term: str) -> List[Dict]:
         try:
@@ -41,7 +44,9 @@ class NewsArticleScraper:
         all_articles = []
         for term in search_terms:
             if self.rate_limited:
-                break
+                logger.info(f"Rate limit reached. Retrying after {self.retry_delay} seconds...")
+                await asyncio.sleep(self.retry_delay)
+                self.rate_limited = False
             articles = await self.fetch_articles(term['term'])
             for article in articles:
                 article['search_term_id'] = term['id']

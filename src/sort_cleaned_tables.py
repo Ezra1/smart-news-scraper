@@ -7,10 +7,9 @@ from pathlib import Path
 from database import DatabaseManager, ArticleManager
 from typing import Optional, Dict
 
-
 # Load environment variables and set up logging
 load_dotenv()
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -26,7 +25,6 @@ class RelevanceFilter:
         self.irrelevant = 0
         self.max_relevance_score = 0
         self.RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.7"))
-
 
     def extract_json_content(self, content: str) -> Optional[Dict]:
         """Extract and parse JSON content from the OpenAI response."""
