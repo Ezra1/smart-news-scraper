@@ -1,139 +1,133 @@
-"""src/sort_cleaned_tables.py"""
-
 import os
 import json
 import logging
-import logging.config
 import re
 from dotenv import load_dotenv
 from pathlib import Path
-from src.database import DatabaseManager, ArticleManager
+from database import DatabaseManager, ArticleManager
+from typing import Optional, Dict
+
 
 # Load environment variables and set up logging
 load_dotenv()
-current_directory = os.path.dirname(os.path.abspath(__file__))
-logging_config_path = os.path.join(current_directory, '..', 'config', 'logging.conf')
-
-# Set up logging
-logging.config.fileConfig(logging_config_path)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-OUTPUT_DIR = Path("openAIFiles/output")
+OUTPUT_DIR = Path("batch/output")
 
 class RelevanceFilter:
-    """Handles the extraction and processing of batch results to determine article relevance."""
+    """Handles extraction and processing of batch results to determine article relevance."""
 
-    def __init__(self, article_manager):
+    def __init__(self, article_manager: ArticleManager):
         self.article_manager = article_manager
         self.relevant = 0
         self.irrelevant = 0
         self.max_relevance_score = 0
-        # Default to 0.7 if not set in environment
         self.RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.7"))
 
-    def extract_json_content(self, content):
-        """Extract and parse JSON content from the model's response."""
+    def extract_json_content(self, content: str) -> Optional[Dict]:
+        """Extract and parse JSON content from the OpenAI response."""
         try:
-            # First try direct JSON parsing
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                # If direct parsing fails, try extracting from markdown code blocks
-                match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
-                if match:
+            # Try direct JSON parsing
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # If direct parsing fails, attempt to extract JSON from Markdown format
+            match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
+            if match:
+                try:
                     return json.loads(match.group(1))
-                else:
-                    raise ValueError("JSON content not found in expected format.")
-        except Exception as e:
-            logging.error(f"JSON parse error in content '{content[:100]}...': {e}")
-            return None
+                except json.JSONDecodeError:
+                    logger.error(f"❌ Failed to parse extracted JSON from response: {content[:100]}...")
+                    return None
+            else:
+                logger.error(f"❌ JSON content not found in expected format: {content[:100]}...")
+                return None
 
-    def process_result(self, result):
+    def process_result(self, result: Dict):
         """Process a single batch result and insert relevant articles into cleaned_articles."""
         try:
             custom_id = result.get("custom_id")
             if not custom_id:
-                logging.error("Missing custom_id in result")
+                logger.error("❌ Missing custom_id in result.")
                 return
 
             response = result.get("response", {})
             choices = response.get("body", {}).get("choices", [])
             if not choices:
-                logging.error(f"No choices found in response for {custom_id}")
+                logger.error(f"❌ No choices found in response for {custom_id}")
                 return
 
             response_content = choices[0].get("message", {}).get("content", "")
             relevance_data = self.extract_json_content(response_content)
 
-            if relevance_data:
-                title = relevance_data.get("title")
-                relevance_score = float(relevance_data.get("relevance_score", 0))
+            if not relevance_data:
+                logger.error(f"❌ Failed to extract relevance data from response for {custom_id}")
+                return
 
-                if relevance_score >= self.RELEVANCE_THRESHOLD:
-                    try:
-                        article_id = int(custom_id.split("-")[1])
-                    except (IndexError, ValueError) as e:
-                        logging.error(f"Invalid custom_id format: {custom_id}: {e}")
-                        return
+            title = relevance_data.get("title", "Unknown Title")
+            relevance_score = float(relevance_data.get("relevance_score", 0))
 
-                    article_data = self.article_manager.get_articles(article_id)
+            if relevance_score >= self.RELEVANCE_THRESHOLD:
+                try:
+                    article_id = int(custom_id.split("-")[1])
+                except (IndexError, ValueError) as e:
+                    logger.error(f"❌ Invalid custom_id format: {custom_id} | Error: {e}")
+                    return
 
-                    if article_data:
-                        self.relevant += 1
-                        self.max_relevance_score = max(self.max_relevance_score, relevance_score)
-                        self.article_manager.insert_cleaned_article(
-                            raw_article_id=article_data["id"],
-                            title=title,
-                            content=article_data["content"],
-                            source=article_data["source"],
-                            url=article_data["url"],
-                            url_to_image=article_data.get("url_to_image"),  # Use get() with default None
-                            published_at=article_data["published_at"],
-                            relevance_score=relevance_score
-                        )
-                        logging.info(f"Inserted relevant article '{title}' with score {relevance_score}")
-                    else:
-                        logging.warning(f"Article data not found for article ID: {article_id}")
+                article_data = self.article_manager.get_articles(article_id)
+
+                if article_data:
+                    self.relevant += 1
+                    self.max_relevance_score = max(self.max_relevance_score, relevance_score)
+                    self.article_manager.insert_cleaned_article(
+                        raw_article_id=article_data["id"],
+                        title=title,
+                        content=article_data["content"],
+                        source=article_data["source"],
+                        url=article_data["url"],
+                        url_to_image=article_data.get("url_to_image"),
+                        published_at=article_data["published_at"],
+                        relevance_score=relevance_score
+                    )
+                    logger.info(f"✅ Inserted relevant article '{title}' with score {relevance_score}")
                 else:
-                    self.irrelevant += 1
-                    logging.info(f"Article '{title}' is not relevant (score: {relevance_score})")
+                    logger.warning(f"⚠️ Article data not found for article ID: {article_id}")
             else:
-                logging.error(f"Failed to extract relevance data from response for {custom_id}")
+                self.irrelevant += 1
+                logger.info(f"❌ Article '{title}' is not relevant (score: {relevance_score})")
 
         except Exception as error:
-            logging.error(f"Error processing result for {custom_id}: {error}")
+            logger.error(f"❌ Error processing result for {custom_id}: {error}")
 
     def process_latest_results(self):
         """Process the most recent batch results file."""
         try:
-            output_files = sorted(OUTPUT_DIR.glob("batch_output_*.jsonl"), key=os.path.getmtime, reverse=True)
+            output_files = sorted(OUTPUT_DIR.glob("results_*.jsonl"), key=os.path.getmtime, reverse=True)
             if not output_files:
-                logging.error("No batch output files found in the output directory")
+                logger.error("❌ No batch output files found in the output directory.")
                 return
 
             latest_results_file = output_files[0]
-            logging.info(f"Processing results from {latest_results_file}")
-            
+            logger.info(f"📂 Processing results from {latest_results_file}")
+
             with open(latest_results_file, "r", encoding="utf-8") as results_file:
                 for line in results_file:
                     try:
                         result = json.loads(line)
                         self.process_result(result)
                     except json.JSONDecodeError as e:
-                        logging.error(f"Invalid JSON in results file: {e}")
-                        continue
+                        logger.error(f"❌ Invalid JSON in results file: {e}")
 
-            logging.info("Batch results processing complete")
+            logger.info("✅ Batch results processing complete.")
         except Exception as error:
-            logging.error(f"Error processing batch results: {error}")
-            raise
+            logger.error(f"❌ Error processing batch results: {error}")
 
     def analyze_results(self):
         """Analyze the results after processing batch output."""
         total_articles = self.relevant + self.irrelevant
         if total_articles == 0:
-            logging.warning("No articles processed")
+            logger.warning("⚠️ No articles processed.")
             return
 
         relevant_percentage = (self.relevant / total_articles) * 100
@@ -152,13 +146,26 @@ class RelevanceFilter:
 
         # Log and print results
         for key, value in analysis_results.items():
-            message = f"{key}: {value}"
-            logging.info(message)
-            print(message)
+            logger.info(f"{key}: {value}")
+            print(f"{key}: {value}")
 
         # Analysis conclusion
-        conclusion = ("Most articles are relevant, indicating well-targeted search." 
-                     if relevant_percentage > 50 
-                     else "Most articles are irrelevant, suggesting search criteria refinement needed.")
-        logging.info(conclusion)
+        conclusion = (
+            "✅ Most articles are relevant, indicating well-targeted search."
+            if relevant_percentage > 50
+            else "⚠️ Most articles are irrelevant, suggesting search criteria refinement needed."
+        )
+        logger.info(conclusion)
         print(conclusion)
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    db_manager = DatabaseManager()
+    article_manager = ArticleManager(db_manager)
+    relevance_filter = RelevanceFilter(article_manager)
+
+    # Process latest batch results
+    relevance_filter.process_latest_results()
+
+    # Analyze results
+    relevance_filter.analyze_results()
