@@ -31,23 +31,37 @@ class ConfigManager:
         return str(project_root / "config.json")
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from the main project directory or create default if missing."""
+        """Load configuration with secure handling of credentials"""
+        config = {}
+        
+        # Load from environment variables first
+        for key in DEFAULT_CONFIG:
+            env_value = os.getenv(f"NEWS_SCRAPER_{key}")
+            if env_value:
+                config[key] = env_value
+
+        # Load from config file, but don't override environment variables
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r', encoding="utf-8") as f:
-                    user_config = json.load(f)
-                    return {**DEFAULT_CONFIG, **user_config}  # Merge defaults with user config
+                    file_config = json.load(f)
+                    # Only use file values for keys not in environment
+                    for key, value in file_config.items():
+                        if key not in config:
+                            config[key] = value
             except json.JSONDecodeError as e:
-                logging.error(f"Error reading config file: {e}")
-                return DEFAULT_CONFIG
+                logging.error(f"Config file error: {e}")
         else:
+            # Create default config file if it doesn't exist
             self.save_config(DEFAULT_CONFIG)
-            return DEFAULT_CONFIG
+
+        # Merge with defaults for any missing values
+        return {**DEFAULT_CONFIG, **config}
 
     def _setup_logging(self):
         """Set up logging configuration."""
         log_file = Path(self.config_path).parent / "news_scraper.log"
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)  # Ensure directory exists
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
         logging.basicConfig(
             level=getattr(logging, self.config.get("LOGGING_LEVEL", "INFO")),
@@ -59,10 +73,18 @@ class ConfigManager:
         )
 
     def save_config(self, config: Dict[str, Any]) -> None:
-        """Save configuration to the main project directory."""
+        """Save configuration to the main project directory with secure handling."""
         try:
+            # Filter out sensitive data before saving
+            safe_config = config.copy()
+            sensitive_keys = ['NEWS_API_KEY', 'OPENAI_API_KEY']
+            
+            for key in sensitive_keys:
+                if key in safe_config and safe_config[key]:
+                    safe_config[key] = ''  # Clear sensitive values when saving to file
+            
             with open(self.config_path, 'w', encoding="utf-8") as f:
-                json.dump(config, f, indent=4)
+                json.dump(safe_config, f, indent=4)
         except Exception as e:
             logging.error(f"Error saving config file: {e}")
 
@@ -81,7 +103,7 @@ class ConfigManager:
         missing_keys = [key for key in required_keys if not self.config.get(key)]
 
         if missing_keys:
-            logging.error(f"❌ Missing required configuration keys: {', '.join(missing_keys)}")
+            logging.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
             return False
         return True
 
@@ -90,8 +112,11 @@ if __name__ == "__main__":
 
     # Prompt user to enter missing API keys
     if not config_manager.validate():
-        print("\n❌ Configuration error: Missing API keys.")
+        print("\nConfiguration error: Missing API keys.")
         print("Please update your config.json file at:", config_manager.config_path)
+        print("\nAlternatively, set environment variables:")
+        print("NEWS_SCRAPER_NEWS_API_KEY")
+        print("NEWS_SCRAPER_OPENAI_API_KEY")
         
         # Prompt user to enter missing keys interactively
         for key in ["NEWS_API_KEY", "OPENAI_API_KEY"]:
@@ -102,7 +127,7 @@ if __name__ == "__main__":
         
         # Validate again
         if not config_manager.validate():
-            print("⚠️ Exiting. Fix missing API keys and restart.")
+            print("Exiting. Fix missing API keys and restart.")
             exit(1)
 
-    print("✅ Configuration loaded successfully.")
+    print("Configuration loaded successfully.")
