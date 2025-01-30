@@ -20,11 +20,13 @@ class RelevanceFilter:
     """Handles extraction and processing of batch results to determine article relevance."""
 
     def __init__(self, article_manager: ArticleManager):
+        """Initialize with shared ArticleManager instance"""
         self.article_manager = article_manager
         self.relevant = 0
         self.irrelevant = 0
         self.max_relevance_score = 0
         self.RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.7"))
+
 
     def extract_json_content(self, content: str) -> Optional[Dict]:
         """Extract and parse JSON content from the OpenAI response."""
@@ -159,13 +161,12 @@ class RelevanceFilter:
         print(conclusion)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    # Example usage with proper database lifecycle
     db_manager = DatabaseManager()
-    article_manager = ArticleManager(db_manager)
-    relevance_filter = RelevanceFilter(article_manager)
-
-    # Process latest batch results
-    relevance_filter.process_latest_results()
-
-    # Analyze results
-    relevance_filter.analyze_results()
+    try:
+        article_manager = ArticleManager(db_manager)
+        relevance_filter = RelevanceFilter(article_manager)
+        relevance_filter.process_latest_results()
+        relevance_filter.analyze_results()
+    finally:
+        db_manager.close()

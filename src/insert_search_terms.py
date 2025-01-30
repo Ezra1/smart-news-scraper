@@ -1,5 +1,5 @@
 # In insert_search_terms.py
-from database import DatabaseManager, SearchTermManager  # Update import
+from database import DatabaseManager, SearchTermManager
 
 if __name__ == "__main__":
     db_path = input("Enter database file path (leave blank for default 'news_articles.db'): ").strip()

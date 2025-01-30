@@ -11,61 +11,61 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
-    """Manages SQLite database operations with enhanced transaction safety"""
+    """Manages SQLite database operations with enhanced connection management"""
 
     def __init__(self, db_path: str = "news_articles.db"):
         """Initialize database connection and create tables if they don't exist"""
         self.db_path = db_path
+        self._connection = None
         self._create_tables()
+
+    @property
+    def connection(self):
+        """Lazy connection initialization"""
+        if self._connection is None:
+            self._connection = sqlite3.connect(
+                self.db_path,
+                timeout=60.0,
+                isolation_level='IMMEDIATE'
+            )
+            self._connection.row_factory = sqlite3.Row
+        return self._connection
+
+    def close(self):
+        """Explicitly close the database connection"""
+        if self._connection is not None:
+            try:
+                self._connection.close()
+                self._connection = None
+            except sqlite3.Error as e:
+                logging.error(f"Error closing database connection: {e}")
 
     @contextmanager
     def get_connection(self):
         """Get a database connection with proper timeout and isolation level"""
-        conn = None
         try:
-            conn = sqlite3.connect(
-                self.db_path,
-                timeout=60.0,  # Wait up to 60 seconds for locks
-                isolation_level='IMMEDIATE'  # Immediate transaction begin
-            )
-            conn.row_factory = sqlite3.Row
-            yield conn
+            yield self.connection
         except sqlite3.Error as e:
             logging.error(f"Database connection error: {e}")
             raise
-        finally:
-            if conn:
-                try:
-                    conn.close()
-                except sqlite3.Error as e:
-                    logging.error(f"Error closing database connection: {e}")
 
     def execute_query(self, query: str, params: tuple = None) -> Optional[List[Dict]]:
         """Execute a SQL query with proper transaction handling"""
-        with self.get_connection() as conn:
-            cur = conn.cursor()
-            try:
-                cur.execute(query, params or ())
-                if query.strip().upper().startswith("SELECT"):
-                    return [dict(row) for row in cur.fetchall()]
-                conn.commit()
-                return None
-            except sqlite3.Error as e:
-                conn.rollback()
-                logging.error(f"Database query error: {e} | Query: {query}")
-                raise
+        try:
+            cur = self.connection.cursor()
+            cur.execute(query, params or ())
+            if query.strip().upper().startswith("SELECT"):
+                return [dict(row) for row in cur.fetchall()]
+            self.connection.commit()
+            return None
+        except sqlite3.Error as e:
+            self.connection.rollback()
+            logging.error(f"Database query error: {e} | Query: {query}")
+            raise
 
-    def execute_many(self, query: str, params_list: List[tuple]) -> None:
-        """Execute multiple SQL queries within a single transaction"""
-        with self.get_connection() as conn:
-            cur = conn.cursor()
-            try:
-                cur.executemany(query, params_list)
-                conn.commit()
-            except sqlite3.Error as e:
-                conn.rollback()
-                logging.error(f"Database bulk operation error: {e} | Query: {query}")
-                raise
+    def __del__(self):
+        """Ensure connection is closed when object is destroyed"""
+        self.close()
 
     def _create_tables(self):
         """Create necessary database tables with proper error handling"""
@@ -141,14 +141,18 @@ class ArticleManager:
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """
 
+        # Handle the source field correctly - it might be nested in a 'source' object
+        source = article_data.get('source', {})
+        source_name = source.get('name') if isinstance(source, dict) else str(source)
+
         params = (
             search_term_id,
             article_data['title'],
             article_data['content'],
-            article_data['source_name'],
+            source_name,
             article_data['url'],
-            article_data.get('url_to_image'),
-            article_data['published_at']
+            article_data.get('urlToImage'),  # Note: API uses camelCase
+            article_data['publishedAt']  # Note: API uses camelCase
         )
 
         try:
