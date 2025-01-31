@@ -10,7 +10,7 @@ from openai import OpenAI
 from openai import OpenAIError, AuthenticationError, RateLimitError, APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -68,9 +68,118 @@ class BatchProcessor:
         self.input_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.rate_limiter = RateLimiter()
+        self.batch_counter = 0
+        self.batch_status = None
+        self.completion_window = "24h"
+
+    def _create_batch_request(self, article: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a single batch request for an article."""
+        return {
+            "custom_id": f"article-{article.get('id')}",
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {
+                "model": "gpt-4-turbo-preview",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Evaluate article relevance and return a score from 0-1."
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Title: {article.get('title', '')}\n"
+                            f"Content: {article.get('content', '')}"
+                        )
+                    }
+                ],
+                "max_tokens": 150,
+                "temperature": 0
+            }
+        }
+
+    def prepare_batch_file(self, articles: List[Dict[str, Any]]) -> str:
+        """Create JSONL file for batch processing."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        input_file = self.input_dir / f"batch_input_{timestamp}.jsonl"
+        
+        with open(input_file, 'w', encoding='utf-8') as f:
+            for article in articles:
+                request = self._create_batch_request(article)
+                f.write(json.dumps(request) + '\n')
+        
+        return str(input_file)
+
+    async def create_batch(self, input_file: str) -> Optional[str]:
+        """Create a new batch job with OpenAI."""
+        try:
+            response = await self.client.files.create(
+                file=open(input_file, 'rb'),
+                purpose="batch"
+            )
+            
+            batch_response = await self.client.batches.create(
+                input_file_id=response.id,
+                endpoint="/v1/chat/completions",
+                completion_window=self.completion_window
+            )
+            
+            return batch_response.id
+        except Exception as e:
+            logger.error(f"Failed to create batch: {e}")
+            return None
+
+    async def check_batch_status(self, batch_id: str) -> Optional[Dict]:
+        """Check the status of a batch job."""
+        try:
+            status = await self.client.batches.retrieve(batch_id)
+            self.batch_status = status
+            return status
+        except Exception as e:
+            logger.error(f"Failed to check batch status: {e}")
+            return None
+
+    async def process_articles(self, articles: List[Dict[str, Any]]) -> Optional[Path]:
+        """Process articles using OpenAI's Batch API."""
+        if not articles:
+            logger.warning("No articles to process")
+            return None
+
+        try:
+            # Prepare batch file
+            input_file = self.prepare_batch_file(articles)
+            logger.info(f"Created batch input file: {input_file}")
+
+            # Create and submit batch
+            batch_id = await self.create_batch(input_file)
+            if not batch_id:
+                raise Exception("Failed to create batch")
+
+            # Monitor batch progress
+            while True:
+                status = await self.check_batch_status(batch_id)
+                if not status:
+                    raise Exception("Failed to check batch status")
+
+                logger.info(f"Batch status: {status.status}")
+                
+                if status.status == "completed":
+                    # Download and save results
+                    output_file = self.output_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+                    await self.client.files.download(status.output_file_id, output_file)
+                    return output_file
+                    
+                elif status.status in ["failed", "expired", "cancelled"]:
+                    raise Exception(f"Batch failed with status: {status.status}")
+
+                await asyncio.sleep(60)  # Check every minute
+
+        except Exception as e:
+            logger.error(f"Batch processing failed: {e}")
+            return None
 
     def send_openai_request(self, article: Dict[str, Any], model: str = "gpt-4-turbo-preview") -> Optional[Dict]:
-        """Send an article for processing with rate limiting and enhanced error handling."""
+        """Legacy method for direct API calls - kept for fallback purposes."""
         if not article:
             logger.error("Empty article provided")
             return None
@@ -101,7 +210,7 @@ class BatchProcessor:
                     temperature=0
                 )
 
-                if not response or not hasattr(response, 'choices'):
+                if not response or not hasattr(response.choices[0].message, 'content'):
                     logger.error("Invalid API response format")
                     return None
 
@@ -129,84 +238,6 @@ class BatchProcessor:
 
         logger.error("Max retries reached")
         return None
-
-    def _process_batch(self, batch: List[Dict[str, Any]]) -> Optional[Path]:
-        """Process a single batch of articles."""
-        try:
-            input_file = self.prepare_batch_file(batch)
-            if not input_file:
-                return None
-
-            logger.info(f"Processing batch of {len(batch)} articles")
-            batch_info = self.upload_and_process(input_file)
-            
-            if not batch_info:
-                return None
-
-            while True:
-                status = self.check_status(batch_info["batch_id"])
-                logger.info(f"Batch status: {status.status}")
-
-                if status.status == "completed":
-                    return self.get_results(status.output_file_id)
-                elif status.status in ["failed", "expired"]:
-                    logger.error(f"Batch failed with status: {status.status}")
-                    return None
-
-                time.sleep(60)  # Check every minute
-
-        except Exception as e:
-            logger.error(f"Batch processing error: {e}")
-            return None
-
-    def process_articles(self, articles: List[Dict[str, Any]]) -> Optional[Path]:
-        """Process articles in batches with enhanced error handling."""
-        if not articles:
-            logger.warning("No articles to process")
-            return None
-
-        try:
-            batch_size = 100
-            results_files = []
-
-            for i in range(0, len(articles), batch_size):
-                batch = articles[i:i + batch_size]
-                logger.info(f"Processing batch {i//batch_size + 1} of {(len(articles)-1)//batch_size + 1}")
-                
-                result_file = self._process_batch(batch)
-                if result_file:
-                    results_files.append(result_file)
-                else:
-                    logger.error(f"Failed to process batch {i//batch_size + 1}")
-
-            if not results_files:
-                logger.error("All batches failed")
-                return None
-
-            # Combine results if multiple batches
-            if len(results_files) > 1:
-                return self._combine_result_files(results_files)
-            
-            return results_files[0]
-
-        except Exception as e:
-            logger.error(f"Article processing failed: {e}")
-            raise
-
-    def _combine_result_files(self, files: List[Path]) -> Path:
-        """Combine multiple result files into one."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        combined_file = self.output_dir / f"combined_results_{timestamp}.jsonl"
-        
-        try:
-            with combined_file.open('w') as outfile:
-                for file in files:
-                    with file.open('r') as infile:
-                        outfile.write(infile.read())
-            return combined_file
-        except Exception as e:
-            logger.error(f"Error combining result files: {e}")
-            return files[0]  # Return first file if combination fails
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

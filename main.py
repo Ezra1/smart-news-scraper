@@ -26,6 +26,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def setup_directories():
+    """Create necessary directories if they don't exist"""
+    directories = [
+        "batch/input",
+        "batch/output",
+        "output"
+    ]
+    for directory in directories:
+        Path(directory).mkdir(parents=True, exist_ok=True)
+
 def database_transaction(db: DatabaseManager):
     """Context manager for database transactions"""
     class TransactionContextManager:
@@ -47,6 +57,7 @@ def database_transaction(db: DatabaseManager):
     return TransactionContextManager(db)
 
 async def main():
+    setup_directories()
     print("\nSmart News Scraper - Interactive Mode\n")
     db = None
 

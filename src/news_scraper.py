@@ -13,7 +13,6 @@ class NewsArticleScraper:
         self.api_key = self.config.get("NEWS_API_KEY")
         self.api_url = self.config.get("NEWS_API_URL")
         self.rate_limited = False
-        self.retry_delay = 60  # Add this line to set retry delay
         
     async def fetch_articles(self, search_term: str) -> List[Dict]:
         try:
@@ -44,9 +43,12 @@ class NewsArticleScraper:
         all_articles = []
         for term in search_terms:
             if self.rate_limited:
-                logger.info(f"Rate limit reached. Retrying after {self.retry_delay} seconds...")
-                await asyncio.sleep(self.retry_delay)
-                self.rate_limited = False
+                logger.warning(f"Skipping term '{term['term']}' due to rate limit")
+                continue
+            
+            # Add delay between requests
+            await asyncio.sleep(1/self.config.get("NEWS_API_REQUESTS_PER_SECOND", 1))
+            
             articles = await self.fetch_articles(term['term'])
             for article in articles:
                 article['search_term_id'] = term['id']
