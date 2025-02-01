@@ -107,7 +107,9 @@ async def main():
                 
                 print(f"Processing {len(articles)} articles...")
                 articles_to_process = article_manager.get_articles()
-                if processor.process_articles(articles_to_process):
+                # Fix: Await the process_articles call
+                results = await processor.process_articles(articles_to_process)
+                if results:
                     print("Processing batch for relevance filtering...")
                     relevance_filter = RelevanceFilter(article_manager)
                     relevance_filter.process_latest_results()
@@ -117,7 +119,9 @@ async def main():
                 articles_to_process = article_manager.get_articles()
                 if articles_to_process:
                     print("Processing existing articles...")
-                    if processor.process_articles(articles_to_process):
+                    # Fix: Await the process_articles call
+                    results = await processor.process_articles(articles_to_process)
+                    if results:
                         relevance_filter = RelevanceFilter(article_manager)
                         relevance_filter.process_latest_results()
                         relevance_filter.analyze_results()

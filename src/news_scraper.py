@@ -13,6 +13,7 @@ class NewsArticleScraper:
         self.api_key = self.config.get("NEWS_API_KEY")
         self.api_url = self.config.get("NEWS_API_URL")
         self.rate_limited = False
+        self.partial_results = []  # Add this line
         
     async def fetch_articles(self, search_term: str) -> List[Dict]:
         try:
@@ -40,17 +41,23 @@ class NewsArticleScraper:
             return []
 
     async def fetch_all_articles(self, search_terms: List[Dict]) -> List[Dict]:
+        """Fetch articles with improved rate limit handling."""
         all_articles = []
         for term in search_terms:
             if self.rate_limited:
-                logger.warning(f"Skipping term '{term['term']}' due to rate limit")
-                continue
+                logger.warning(f"Rate limit reached after processing {len(all_articles)} articles.")
+                logger.warning(f"Skipping remaining {len(search_terms) - len(self.partial_results)} terms.")
+                return all_articles
             
             # Add delay between requests
             await asyncio.sleep(1/self.config.get("NEWS_API_REQUESTS_PER_SECOND", 1))
             
             articles = await self.fetch_articles(term['term'])
-            for article in articles:
-                article['search_term_id'] = term['id']
-            all_articles.extend(articles)
+            self.partial_results.append(term['term'])  # Track processed terms
+            
+            if articles:
+                for article in articles:
+                    article['search_term_id'] = term['id']
+                all_articles.extend(articles)
+
         return all_articles
