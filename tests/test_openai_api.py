@@ -1,55 +1,58 @@
 """tests/test_openai_api.py"""
 
-from openai import OpenAI
+import pytest
 import os
+from openai import OpenAI
+from unittest.mock import patch
 from dotenv import load_dotenv
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OpenAI.api_key = OPENAI_API_KEY
+@pytest.fixture
+def client():
+    """Fixture to create OpenAI client with API key."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        pytest.skip("OPENAI_API_KEY not found in environment")
+    return OpenAI(api_key=api_key)
 
-client = OpenAI()
-"""
-# For checking if the OpenAI call works
-completion = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {
-            "role": "user",
-            "content": "Write a haiku about recursion in programming."
-        }
-    ]
-)
+def test_openai_connection(client):
+    """Test that we can connect to OpenAI API."""
+    assert client is not None
+    assert isinstance(client, OpenAI)
 
-print(completion.choices[0].message)
-
-"""
-def list_running_batches():
+def test_chat_completion(client):
+    """Test basic chat completion functionality."""
     try:
-        # Retrieve all batches with a limit on the number of results
-        all_batches = client.batches.list(limit=100)
+        completion = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Say 'test' and nothing else."}
+            ],
+            max_tokens=10
+        )
         
-        # Filter batches to only include those that are "in_progress" or "validating"
-        running_batches = [
-            batch for batch in all_batches.data 
-            if batch.status in ["in_progress", "validating"]
-        ]
+        assert completion.choices is not None
+        assert len(completion.choices) > 0
+        assert completion.choices[0].message is not None
+        # Check if response contains 'test' (case-insensitive)
+        assert 'test' in completion.choices[0].message.content.lower()
         
-        # Display the running batches
-        for batch in running_batches:
-            print(f"Batch ID: {batch.id}, Status: {batch.status}, Created At: {batch.created_at}")
-        
-        if not running_batches:
-            print("No batches are currently running.")
-    
     except Exception as e:
-        print(f"Error fetching running batches: {e}")
+        pytest.fail(f"Chat completion test failed: {str(e)}")
 
-# Call the function to check running batches
-list_running_batches()
+@pytest.mark.skip(reason="Only run when checking API limits")
+def test_rate_limiting(client):
+    """Test rate limiting behavior (skipped by default)."""
+    for i in range(3):  # Make 3 rapid requests
+        completion = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {"role": "user", "content": "Say 'test'."}
+            ],
+            max_tokens=10
+        )
+        assert completion.choices[0].message is not None
 
-
-list_batches = client.batches.list()
-if not list_batches:
-    print("no batches running")
+if __name__ == "__main__":
+    pytest.main([__file__])

@@ -7,3 +7,4 @@ batch_processing.log
 openAIFiles/batch_input.jsonl
 src/__pycache__
 tests/__pycache__
+batch/*

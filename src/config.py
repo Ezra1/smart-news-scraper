@@ -64,17 +64,30 @@ class ConfigManager:
     def _setup_logging(self):
         """Set up logging configuration."""
         log_file = Path(self.config_path).parent / "news_scraper.log"
-        os.makedirs(os.path.dirname(log_file), exist_ok=True)
-
-        logging.basicConfig(
-            level=getattr(logging, self.config.get("LOGGING_LEVEL", "INFO")),
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
+        
+        # Ensure old handlers are removed
+        root = logging.getLogger()
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+            
+        # Configure logging with both file and console handlers
+        handlers = [
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+        
+        # Set format for all handlers
+        formatter = logging.Formatter(
+            '%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
-        logger.setLevel(getattr(logging, self.config.get("LOGGING_LEVEL", "INFO")))
+        
+        for handler in handlers:
+            handler.setFormatter(formatter)
+            root.addHandler(handler)
+            
+        # Set root logger level
+        root.setLevel(getattr(logging, self.config.get("LOGGING_LEVEL", "INFO")))
 
     def save_config(self, config: Dict[str, Any]) -> None:
         """Save configuration to the main project directory with secure handling."""

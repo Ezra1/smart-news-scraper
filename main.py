@@ -11,18 +11,21 @@ sys.path.append(str(src_dir))
 # Now import the modules
 from database import DatabaseManager, ArticleManager, SearchTermManager
 from news_scraper import NewsArticleScraper
-from relevance_filtering import BatchProcessor
+from relevance_filtering import ArticleProcessor
 from validation import ArticleValidator
 from duplication import ArticleDeduplicator
 from sort_cleaned_tables import RelevanceFilter
 from config import ConfigManager
 
-# Set up logging
+# Update logging configuration
 LOG_FILE = "news_scraper.log"
 logging.basicConfig(
-    filename=LOG_FILE,
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -75,7 +78,7 @@ async def main():
         
         search_manager = SearchTermManager(db)
         article_manager = ArticleManager(db)
-        processor = BatchProcessor()
+        processor = ArticleProcessor()  # Changed from BatchProcessor to ArticleProcessor
         scraper = NewsArticleScraper(config_manager)
 
         search_terms_file = input("Enter path to search_terms.txt (leave blank for default): ").strip()
@@ -107,7 +110,7 @@ async def main():
                 
                 print(f"Processing {len(articles)} articles...")
                 articles_to_process = article_manager.get_articles()
-                # Fix: Await the process_articles call
+                # Change: Add await since process_articles is now async
                 results = await processor.process_articles(articles_to_process)
                 if results:
                     print("Processing batch for relevance filtering...")
@@ -119,7 +122,7 @@ async def main():
                 articles_to_process = article_manager.get_articles()
                 if articles_to_process:
                     print("Processing existing articles...")
-                    # Fix: Await the process_articles call
+                    # Change: Add await since process_articles is now async
                     results = await processor.process_articles(articles_to_process)
                     if results:
                         relevance_filter = RelevanceFilter(article_manager)

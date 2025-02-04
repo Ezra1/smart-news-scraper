@@ -134,6 +134,10 @@ class ArticleManager:
             logging.info(f"Skipping duplicate article: {article_data['url']}")
             return None
 
+        if not all(key in article_data for key in ['title', 'content', 'url']):
+            logging.error(f"Missing required fields in article data: {article_data}")
+            return None
+
         query = """
             INSERT INTO raw_articles (
                 search_term_id, title, content, source, url, 
