@@ -18,7 +18,7 @@ from database import ArticleManager, DatabaseManager
 from config import ConfigManager
 
 class RateLimiter:
-    def __init__(self, requests_per_minute: int = 120):
+    def __init__(self, requests_per_minute: int):
         self.requests_per_minute = requests_per_minute
         self.request_times = []
         self._last_request_time = 0
@@ -28,11 +28,11 @@ class RateLimiter:
         current_time = time.time()
         
         # Clean up old request times
-        self.request_times = [t for t in self.request_times if current_time - t < 120]
+        self.request_times = [t for t in self.request_times if current_time - t < 60]
         
         # Check if we need to wait
         if len(self.request_times) >= self.requests_per_minute:
-            wait_time = 120 - (current_time - self.request_times[0])
+            wait_time = 60 - (current_time - self.request_times[0])
             if wait_time > 0:
                 time.sleep(wait_time)
         
@@ -54,8 +54,10 @@ class ArticleProcessor:
             raise ValueError("Missing OpenAI API Key")
             
         self.client = OpenAI(api_key=self.OPENAI_API_KEY)
-        self.rate_limiter = RateLimiter()
+        requests_per_minute = config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
+        self.rate_limiter = RateLimiter(requests_per_minute)
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
+        self.remaining_calls = requests_per_minute  # Initialize remaining calls
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article."""
@@ -76,7 +78,7 @@ class ArticleProcessor:
             }
         ]
 
-    async def process_article(self, article: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def process_article(self, article: Dict[str, Any], remaining_articles: int) -> Optional[Dict[str, Any]]:
         """Process a single article using the OpenAI API with RAG."""
         if not article:
             logger.error("Empty article provided")
@@ -108,6 +110,11 @@ class ArticleProcessor:
                 )
 
                 if response.choices and response.choices[0].message:
+                    self.remaining_calls -= 1
+                    logger.info(f"Remaining API calls: {self.remaining_calls}")
+                    print(f"Remaining API calls: {self.remaining_calls}")
+                    logger.info(f"Remaining articles to process: {remaining_articles}")
+                    print(f"Remaining articles to process: {remaining_articles}")
                     return {
                         'article_id': article.get('id'),
                         'analysis': response.choices[0].message.content,
@@ -128,9 +135,11 @@ class ArticleProcessor:
         """Process multiple articles concurrently with rate limiting."""
         tasks = []
         results = []
+        total_articles = len(articles)
         
-        for article in articles:
-            task = asyncio.create_task(self.process_article(article))
+        for idx, article in enumerate(articles):
+            remaining_articles = total_articles - idx - 1
+            task = asyncio.create_task(self.process_article(article, remaining_articles))
             tasks.append(task)
         
         for idx, task in enumerate(asyncio.as_completed(tasks), 1):

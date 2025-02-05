@@ -16,6 +16,7 @@ from validation import ArticleValidator
 from duplication import ArticleDeduplicator
 from sort_cleaned_tables import RelevanceFilter
 from config import ConfigManager
+from extract_cleaned_data import extract_cleaned_data
 
 # Update logging configuration
 LOG_FILE = "news_scraper.log"
@@ -130,6 +131,11 @@ async def main():
                         relevance_filter.analyze_results()
 
             print("\nProcessing completed.")
+
+            # Extract cleaned and relevant data
+            output_file = "/home/turambar/projects/smart-news-scraper/output/cleaned_articles.txt"
+            extract_cleaned_data(db_path, output_file)
+            print(f"Cleaned and relevant data extracted to {output_file}")
 
         except Exception as e:
             logger.error(f"Error during processing: {e}")
