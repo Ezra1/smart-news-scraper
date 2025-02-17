@@ -45,6 +45,7 @@ class DatabaseManager:
         """Get a database connection with proper timeout and isolation level"""
         try:
             yield self.connection
+            logging.info("Database connection successful")
         except sqlite3.Error as e:
             logging.error(f"Database connection error: {e}")
             raise
@@ -165,6 +166,7 @@ class ArticleManager:
                 cur.execute(query, params)
                 conn.commit()
                 return cur.lastrowid
+            logging.info(f"Inserted article '{article_data['title']}'")
         except sqlite3.Error as e:
             logging.error(f"Error inserting article '{article_data['title']}': {e}")
             return None

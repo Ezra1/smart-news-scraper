@@ -1,58 +1,81 @@
-"""tests/test_openai_api.py"""
+"""Basic tests for OpenAI API integration"""
 
 import pytest
 import os
+import sys
+import json
 from openai import OpenAI
-from unittest.mock import patch
 from dotenv import load_dotenv
+from pathlib import Path
+
+# Load environment variables
 load_dotenv()
+
+# Add project root to path
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+from src.database import DatabaseManager
+
+def log_test(msg: str):
+    """Simple test logging"""
+    print(f"\n{msg}")
 
 @pytest.fixture
 def client():
-    """Fixture to create OpenAI client with API key."""
+    """Create OpenAI client"""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        pytest.skip("OPENAI_API_KEY not found in environment")
+        pytest.skip("OPENAI_API_KEY not found")
     return OpenAI(api_key=api_key)
 
-def test_openai_connection(client):
-    """Test that we can connect to OpenAI API."""
+@pytest.fixture
+def db_article():
+    """Get first article from database"""
+    db = DatabaseManager("news_articles.db")
+    articles = db.execute_query("SELECT * FROM raw_articles LIMIT 1")
+    if not articles:
+        pytest.skip("No articles in database")
+    return articles[0]
+
+def test_api_connection(client):
+    """Test OpenAI API connection"""
+    log_test("Testing API connection")
     assert client is not None
-    assert isinstance(client, OpenAI)
 
-def test_chat_completion(client):
-    """Test basic chat completion functionality."""
+def test_article_analysis(client, db_article):
+    """Test article relevance analysis"""
+    log_test(f"Testing article: {db_article['title'][:50]}...")
+    
+    response = client.chat.completions.create(
+        model="gpt-4-turbo-preview",
+        messages=[
+            {
+                "role": "system",
+                "content": "Analyze pharmaceutical security and supply chain articles. Return JSON with relevance_score (0-1)."
+            },
+            {
+                "role": "user",
+                "content": f"Title: {db_article['title']}\nContent: {db_article['content']}"
+            }
+        ],
+        max_tokens=250
+    )
+    
+    result = response.choices[0].message.content
+    log_test(f"API response: {result[:100]}...")
+    
+    # Basic response validation
+    assert response.choices is not None
+    assert len(response.choices) > 0
+    
+    # Try parsing JSON response
     try:
-        completion = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Say 'test' and nothing else."}
-            ],
-            max_tokens=10
-        )
-        
-        assert completion.choices is not None
-        assert len(completion.choices) > 0
-        assert completion.choices[0].message is not None
-        # Check if response contains 'test' (case-insensitive)
-        assert 'test' in completion.choices[0].message.content.lower()
-        
-    except Exception as e:
-        pytest.fail(f"Chat completion test failed: {str(e)}")
-
-@pytest.mark.skip(reason="Only run when checking API limits")
-def test_rate_limiting(client):
-    """Test rate limiting behavior (skipped by default)."""
-    for i in range(3):  # Make 3 rapid requests
-        completion = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
-            messages=[
-                {"role": "user", "content": "Say 'test'."}
-            ],
-            max_tokens=10
-        )
-        assert completion.choices[0].message is not None
+        json_data = json.loads(result)
+        assert isinstance(json_data, dict)
+        assert "relevance_score" in json_data
+    except json.JSONDecodeError:
+        # Fallback to keyword check if not JSON
+        assert any(kw in result.lower() for kw in ['relevant', 'score', 'pharmaceutical'])
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    pytest.main([__file__, "-v"])

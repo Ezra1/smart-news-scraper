@@ -57,7 +57,6 @@ class ArticleProcessor:
         requests_per_minute = config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
         self.rate_limiter = RateLimiter(requests_per_minute)
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
-        self.remaining_calls = requests_per_minute  # Initialize remaining calls
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article."""
@@ -90,7 +89,6 @@ class ArticleProcessor:
             async with self.semaphore:
                 context_data = self.get_context_data(article)
                 
-                # Remove await since OpenAI's create is synchronous
                 response = self.client.chat.completions.create(
                     model="gpt-4-turbo-preview",
                     messages=[
@@ -110,11 +108,7 @@ class ArticleProcessor:
                 )
 
                 if response.choices and response.choices[0].message:
-                    self.remaining_calls -= 1
-                    logger.info(f"Remaining API calls: {self.remaining_calls}")
-                    print(f"Remaining API calls: {self.remaining_calls}")
                     logger.info(f"Remaining articles to process: {remaining_articles}")
-                    print(f"Remaining articles to process: {remaining_articles}")
                     return {
                         'article_id': article.get('id'),
                         'analysis': response.choices[0].message.content,
