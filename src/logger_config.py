@@ -2,25 +2,22 @@ import os
 import logging
 from pathlib import Path
 
-def setup_logging(config_dir: Path, level: str = "INFO") -> None:
+def setup_logging(name: str = None) -> logging.Logger:
     """
     Configure logging for the entire application.
     
     Args:
-        config_dir: Directory where logs should be stored (usually project root)
-        level: Logging level as string (default: "INFO")
+        name: Optional logger name (default: None - root logger)
+    Returns:
+        logging.Logger: Configured logger instance
     """
-    # Create logs directory if it doesn't exist
-    log_dir = config_dir / "logs"
+    # Create logs directory in project root
+    project_root = Path(__file__).resolve().parent.parent
+    log_dir = project_root / "logs"
     log_dir.mkdir(exist_ok=True)
     
     # Main log file
     log_file = log_dir / "news_scraper.log"
-    
-    # Remove any existing handlers
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
     
     # Configure logging with both file and console handlers
     handlers = [
@@ -33,9 +30,19 @@ def setup_logging(config_dir: Path, level: str = "INFO") -> None:
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     
+    # Get logger
+    logger = logging.getLogger(name) if name else logging.getLogger()
+    
+    # Remove any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Add and configure handlers
     for handler in handlers:
         handler.setFormatter(formatter)
-        root_logger.addHandler(handler)
+        logger.addHandler(handler)
     
     # Set logging level
-    root_logger.setLevel(getattr(logging, level.upper()))
+    logger.setLevel(logging.INFO)
+    
+    return logger

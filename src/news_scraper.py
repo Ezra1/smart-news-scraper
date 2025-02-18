@@ -1,11 +1,16 @@
 import aiohttp
-import logging
-import asyncio  # Add this import
+import asyncio
 from typing import List, Dict
-from config import ConfigManager
+from pathlib import Path
+import sys
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
+
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
+from src.config import ConfigManager
 
 class NewsArticleScraper:
     def __init__(self, config_manager: ConfigManager):

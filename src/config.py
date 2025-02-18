@@ -1,8 +1,10 @@
 import os
 import json
-import logging
 from pathlib import Path
 from typing import Dict, Any
+
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
 
 # Default Configuration
 DEFAULT_CONFIG = {
@@ -18,15 +20,11 @@ DEFAULT_CONFIG = {
     "OUTPUT_DIR": "output"
 }
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-
 class ConfigManager:
     def __init__(self):
         """Initialize config manager and load config file from the project root."""
         self.config_path = self.get_config_path()
         self.config = self._load_config()
-        self._setup_logging()
 
     def get_config_path(self) -> str:
         """Ensure config.json is stored in the main project directory, not src/."""
@@ -43,51 +41,23 @@ class ConfigManager:
             if env_value:
                 config[key] = env_value
 
-        # Load from config file, but don't override environment variables
+        # Load from config file
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r', encoding="utf-8") as f:
                     file_config = json.load(f)
-                    # Only use file values for keys not in environment
                     for key, value in file_config.items():
                         if key not in config:
                             config[key] = value
             except json.JSONDecodeError as e:
-                logging.error(f"Config file error: {e}")
+                logger.error(f"Config file error: {e}")  # Changed from logging.error
+
         else:
             # Create default config file if it doesn't exist
             self.save_config(DEFAULT_CONFIG)
 
         # Merge with defaults for any missing values
         return {**DEFAULT_CONFIG, **config}
-
-    def _setup_logging(self):
-        """Set up logging configuration."""
-        log_file = Path(self.config_path).parent / "news_scraper.log"
-        
-        # Ensure old handlers are removed
-        root = logging.getLogger()
-        for handler in root.handlers[:]:
-            root.removeHandler(handler)
-            
-        # Configure logging with both file and console handlers
-        handlers = [
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-        
-        # Set format for all handlers
-        formatter = logging.Formatter(
-            '%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        
-        for handler in handlers:
-            handler.setFormatter(formatter)
-            root.addHandler(handler)
-            
-        # Set root logger level
-        root.setLevel(getattr(logging, self.config.get("LOGGING_LEVEL", "INFO")))
 
     def save_config(self, config: Dict[str, Any]) -> None:
         """Save configuration to the main project directory with secure handling."""
@@ -103,7 +73,7 @@ class ConfigManager:
             with open(self.config_path, 'w', encoding="utf-8") as f:
                 json.dump(safe_config, f, indent=4)
         except (OSError, IOError) as e:
-            logging.error(f"Error saving config file: {e}")
+            logger.error(f"Error saving config file: {e}")
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value."""
@@ -120,7 +90,7 @@ class ConfigManager:
         missing_keys = [key for key in required_keys if not self.config.get(key)]
 
         if missing_keys:
-            logging.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
+            logger.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
             return False
         return True
 

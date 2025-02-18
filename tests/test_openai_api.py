@@ -18,28 +18,49 @@ from src.insert_processed_articles import RelevanceFilter
 async def test_process_single_article():
     """Test processing a single article and display the results."""
     try:
-        # Get database connection and fetch an article
+        # Get database connection
         db = DatabaseManager("news_articles.db")
         article_manager = ArticleManager(db)
-        articles = db.execute_query("SELECT * FROM raw_articles LIMIT 1")
         
-        if not articles:
-            print("❌ No articles found in database")
-            return
-            
-        article = articles[0]
+        # Create a relevant test article
+        test_article = {
+            'title': 'New Pharmaceutical Supply Chain Security Measures Implemented',
+            'content': '''Major pharmaceutical companies have implemented blockchain technology 
+                      to enhance supply chain security and prevent counterfeit medications. 
+                      The system includes end-to-end tracking of drug shipments and 
+                      temperature monitoring for sensitive medications. This initiative 
+                      aims to reduce the $200 billion counterfeit drug market.''',
+            'url': 'https://example.com/pharma-security',
+            'source': 'Test Source',
+            'published_at': datetime.now().isoformat()
+        }
+        
+        # Insert test article
+        cursor = db.connection.cursor()
+        cursor.execute("""
+            INSERT INTO raw_articles (title, content, url, source, published_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            test_article['title'],
+            test_article['content'],
+            test_article['url'],
+            test_article['source'],
+            test_article['published_at']
+        ))
+        db.connection.commit()
+        test_article['id'] = cursor.lastrowid
+
         print("\n" + "="*80)
         print("Testing Article:")
         print("="*80)
-        print(f"ID: {article['id']}")
-        print(f"Title: {article['title']}")
-        print(f"Content preview: {article['content'][:200]}...")
+        print(f"ID: {test_article['id']}")
+        print(f"Title: {test_article['title']}")
+        print(f"Content preview: {test_article['content'][:200]}...")
         print("="*80)
 
         # Process the article
         processor = ArticleProcessor()
-        result = await processor.process_article(article, remaining_articles=0)
-        print("="*80)
+        result = await processor.process_article(test_article, remaining_articles=0)
         
         if result:
             print("\nProcessing Result:")
@@ -63,6 +84,9 @@ async def test_process_single_article():
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
     finally:
+        # Clean up test data
+        cursor.execute("DELETE FROM raw_articles WHERE id = ?", (test_article['id'],))
+        db.connection.commit()
         db.close()
 
 if __name__ == "__main__":

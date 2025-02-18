@@ -1,7 +1,9 @@
 import os
-import logging
 import sys
 from pathlib import Path
+
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
 
 # Update imports to match correct file names
 from src.database_manager import DatabaseManager, ArticleManager, SearchTermManager
@@ -11,18 +13,7 @@ from src.extract_cleaned_articles import extract_cleaned_data
 from src.insert_processed_articles import RelevanceFilter
 from src.config import ConfigManager
 
-# Update logging configuration
-LOG_FILE = "news_scraper.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
+# Remove the old logging configuration and continue with existing code
 def setup_directories():
     """Create necessary directories if they don't exist"""
     directories = [

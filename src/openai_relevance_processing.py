@@ -1,15 +1,14 @@
 import os
 import sys
-import logging
 import time
 import asyncio
-from  pydantic import BaseModel
+from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from openai import OpenAI, RateLimitError
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
@@ -84,7 +83,7 @@ class ArticleProcessor:
         ]
 
     async def process_article(self, article: Dict[str, Any], remaining_articles: int) -> Optional[Dict[str, Any]]:
-        """Process a single article using the OpenAI API with RAG."""
+        """Process a single article using the OpenAI API"""
         if not article:
             logger.error("Empty article provided")
             return None
@@ -119,11 +118,14 @@ class ArticleProcessor:
                 )
 
                 if response.choices and response.choices[0].message:
+                    parsed_response = response.choices[0].message.parsed
+                    relevance_score = parsed_response.relevance_score
+
                     logger.info(f"Remaining articles to process: {remaining_articles}")
                     return {
                         'raw_article_id': article.get('id', 0),
                         'url': article.get('url', ''),
-                        'analysis': response.choices[0].message.parsed.dict(),
+                        'relevance_score': relevance_score,
                         'processed_at': datetime.now().isoformat()
                     }
                 
@@ -162,7 +164,7 @@ class ArticleProcessor:
         return results
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logger.INFO)
     try:
         db_manager = DatabaseManager()
         processor = ArticleProcessor()

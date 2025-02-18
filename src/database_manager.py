@@ -1,14 +1,13 @@
 """src/database.py: Handles all database operations using SQLite with enhanced transaction safety"""
 
 import os
-import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
 
 class DatabaseManager:
     """Manages SQLite database operations with enhanced connection management"""
@@ -38,16 +37,16 @@ class DatabaseManager:
                 self._connection.close()
                 self._connection = None
             except sqlite3.Error as e:
-                logging.error(f"Error closing database connection: {e}")
+                logger.error(f"Error closing database connection: {e}")
 
     @contextmanager
     def get_connection(self):
         """Get a database connection with proper timeout and isolation level"""
         try:
             yield self.connection
-            logging.info("Database connection successful")
+            logger.info("Database connection successful")
         except sqlite3.Error as e:
-            logging.error(f"Database connection error: {e}")
+            logger.error(f"Database connection error: {e}")
             raise
 
     def execute_query(self, query: str, params: tuple = None) -> Optional[List[Dict]]:
@@ -61,7 +60,7 @@ class DatabaseManager:
             return None
         except sqlite3.Error as e:
             self.connection.rollback()
-            logging.error(f"Database query error: {e} | Query: {query}")
+            logger.error(f"Database query error: {e} | Query: {query}")
             raise
 
     def __del__(self):
@@ -111,7 +110,7 @@ class DatabaseManager:
                 conn.commit()
             except sqlite3.Error as e:
                 conn.rollback()
-                logging.error(f"Error creating database tables: {e}")
+                logger.error(f"Error creating database tables: {e}")
                 raise
 
 class ArticleManager:
@@ -132,11 +131,11 @@ class ArticleManager:
     def insert_article(self, article_data: dict, search_term_id: int) -> Optional[int]:
         """Insert an article with proper transaction handling"""
         if self.article_exists(article_data['url']):
-            logging.info(f"Skipping duplicate article: {article_data['url']}")
+            logger.info(f"Skipping duplicate article: {article_data['url']}")
             return None
 
         if not all(key in article_data for key in ['title', 'content', 'url']):
-            logging.error(f"Missing required fields in article data: {article_data}")
+            logger.error(f"Missing required fields in article data: {article_data}")
             return None
 
         query = """
@@ -166,9 +165,9 @@ class ArticleManager:
                 cur.execute(query, params)
                 conn.commit()
                 return cur.lastrowid
-            logging.info(f"Inserted article '{article_data['title']}'")
+            logger.info(f"Inserted article '{article_data['title']}'")
         except sqlite3.Error as e:
-            logging.error(f"Error inserting article '{article_data['title']}': {e}")
+            logger.error(f"Error inserting article '{article_data['title']}': {e}")
             return None
 
     def get_articles(self, article_id: Optional[int] = None) -> Optional[Dict]:
@@ -179,14 +178,15 @@ class ArticleManager:
             result = self.db_manager.execute_query(query, (article_id,) if article_id else None)
             return result[0] if article_id and result else result
         except sqlite3.Error as e:
-            logging.error(f"Error retrieving articles: {e}")
+            logger.error(f"Error retrieving articles: {e}")
             return None
 
     def get_article_by_id(self, article_id: int) -> Optional[Dict[str, Any]]:
         """Retrieve an article from the raw_articles table by its ID."""
         query = "SELECT * FROM raw_articles WHERE id = ?"
         result = self.db_manager.execute_query(query, (article_id,))
-        return result.fetchone()
+        # Return the first item if result exists, otherwise None
+        return result[0] if result else None
 
     def insert_cleaned_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float):
         """Insert an article into the cleaned_articles table."""
@@ -275,6 +275,6 @@ if __name__ == "__main__":
         for term in search_term_manager.get_search_terms():
             print(f"- {term['term']}")
     except Exception as e:
-        logging.error(f"Database initialization error: {e}")
+        logger.error(f"Database initialization error: {e}")
         print(f"Error: {e}")
         exit(1)

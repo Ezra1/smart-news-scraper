@@ -1,9 +1,8 @@
 # In insert_search_terms.py
 from src.database_manager import DatabaseManager, SearchTermManager
-import logging
+from src.logger_config import setup_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+logger = setup_logging(__name__)
 
 if __name__ == "__main__":
     db_path = input("Enter database file path (leave blank for default 'news_articles.db'): ").strip()

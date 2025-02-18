@@ -8,11 +8,11 @@ from src.database_manager import DatabaseManager, ArticleManager
 from src.config import ConfigManager
 from typing import Optional, Dict
 
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
+
 # Load environment variables and set up logging
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-
 OUTPUT_DIR = Path("output")
 
 class RelevanceFilter:

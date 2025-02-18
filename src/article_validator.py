@@ -1,15 +1,14 @@
 import re
 import html
 import bleach
-import logging
 from dateutil import parser
 from datetime import datetime
 from typing import Dict, Optional, Set
 from bs4 import BeautifulSoup, Comment
 from urllib.parse import urlparse, urljoin
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
 
 class ArticleValidator:
     def __init__(self):

@@ -1,12 +1,11 @@
-import logging
 import numpy as np
 from typing import List, Dict, Optional
 from difflib import SequenceMatcher
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
 
 class ArticleDeduplicator:
     def __init__(self, similarity_threshold: float = 0.85):
