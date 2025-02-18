@@ -11,14 +11,16 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-from src.database_manager import DatabaseManager
+from src.database_manager import DatabaseManager, ArticleManager
 from src.openai_relevance_processing import ArticleProcessor
+from src.insert_processed_articles import RelevanceFilter
 
 async def test_process_single_article():
     """Test processing a single article and display the results."""
     try:
         # Get database connection and fetch an article
         db = DatabaseManager("news_articles.db")
+        article_manager = ArticleManager(db)
         articles = db.execute_query("SELECT * FROM raw_articles LIMIT 1")
         
         if not articles:
@@ -37,11 +39,23 @@ async def test_process_single_article():
         # Process the article
         processor = ArticleProcessor()
         result = await processor.process_article(article, remaining_articles=0)
+        print("="*80)
         
         if result:
             print("\nProcessing Result:")
             print("="*80)
             print(json.dumps(result, indent=2))
+            print("="*80)
+            
+            # Initialize RelevanceFilter and process the result
+            relevance_filter = RelevanceFilter(article_manager)
+            relevance_filter.process_result(result)
+            
+            print("\nRelevance Analysis:")
+            print("="*80)
+            print(f"Relevant articles: {relevance_filter.relevant}")
+            print(f"Irrelevant articles: {relevance_filter.irrelevant}")
+            print(f"Max relevance score: {relevance_filter.max_relevance_score}")
             print("="*80)
         else:
             print("\n❌ Article processing failed")

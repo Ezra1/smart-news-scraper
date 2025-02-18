@@ -3,15 +3,13 @@ import logging
 import sys
 from pathlib import Path
 
-# Now import the modules
-from src.database import DatabaseManager, ArticleManager, SearchTermManager
+# Update imports to match correct file names
+from src.database_manager import DatabaseManager, ArticleManager, SearchTermManager
 from src.news_scraper import NewsArticleScraper
-from src.relevance_filtering import ArticleProcessor
-from src.validation import ArticleValidator
-from src.duplication import ArticleDeduplicator
-from src.sort_cleaned_tables import RelevanceFilter
-from config import ConfigManager
-from src.extract_cleaned_data import extract_cleaned_data
+from src.openai_relevance_processing import ArticleProcessor
+from src.extract_cleaned_articles import extract_cleaned_data
+from src.insert_processed_articles import RelevanceFilter
+from src.config import ConfigManager
 
 # Update logging configuration
 LOG_FILE = "news_scraper.log"

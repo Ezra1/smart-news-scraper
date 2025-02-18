@@ -5,6 +5,7 @@ import re
 from dotenv import load_dotenv
 from pathlib import Path
 from src.database_manager import DatabaseManager, ArticleManager
+from src.config import ConfigManager
 from typing import Optional, Dict
 
 # Load environment variables and set up logging
@@ -12,17 +13,19 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+OUTPUT_DIR = Path("output")
 
 class RelevanceFilter:
     """Handles extraction and processing of results to determine article relevance."""
 
     def __init__(self, article_manager: ArticleManager):
         """Initialize with shared ArticleManager instance"""
+        config_manager = ConfigManager()
         self.article_manager = article_manager
         self.relevant = 0
         self.irrelevant = 0
         self.max_relevance_score = 0
-        self.RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.7"))
+        self.RELEVANCE_THRESHOLD = float(config_manager.get("RELEVANCE_THRESHOLD"))
 
     def extract_json_content(self, content: str) -> Optional[Dict]:
         """Extract and parse JSON content from the OpenAI response."""
@@ -45,42 +48,35 @@ class RelevanceFilter:
     def process_result(self, result: Dict):
         """Process a single result and insert relevant articles into cleaned_articles."""
         try:
-            custom_id = result.get("custom_id")
-            if not custom_id:
-                logger.error("❌ Missing custom_id in result.")
+            # Load the raw_article_id
+            raw_article_id = result.get("raw_article_id")
+            if not raw_article_id:
+                logger.error("❌ Missing raw_article_id in result.")
                 return
-
-            response = result.get("response", {})
-            choices = response.get("body", {}).get("choices", [])
-            if not choices:
-                logger.error(f"❌ No choices found in response for {custom_id}")
+            
+            # Load the url
+            url = result.get("url")
+            if not url:
+                logger.error(f"❌ Missing URL in result for article ID: {raw_article_id}")
                 return
-
-            response_content = choices[0].get("message", {}).get("content", "")
-            relevance_data = self.extract_json_content(response_content)
-
-            if not relevance_data:
-                logger.error(f"❌ Failed to extract relevance data from response for {custom_id}")
+            
+            # Load the relevance score
+            relevance_score = result.get("relevance_score")
+            if relevance_score is None:
+                logger.error(f"❌ Missing relevance_score in result for article ID: {raw_article_id}")
                 return
-
-            title = relevance_data.get("title", "Unknown Title")
-            relevance_score = float(relevance_data.get("relevance_score", 0))
 
             if relevance_score >= self.RELEVANCE_THRESHOLD:
-                try:
-                    article_id = int(custom_id.split("-")[1])
-                except (IndexError, ValueError) as e:
-                    logger.error(f"❌ Invalid custom_id format: {custom_id} | Error: {e}")
-                    return
-
-                article_data = self.article_manager.get_articles(article_id)
+                # Retrieve the article data from the raw_articles table
+                article_data = self.article_manager.get_article_by_id(raw_article_id)
 
                 if article_data:
                     self.relevant += 1
                     self.max_relevance_score = max(self.max_relevance_score, relevance_score)
+                    # Insert the article data into the cleaned_articles table
                     self.article_manager.insert_cleaned_article(
                         raw_article_id=article_data["id"],
-                        title=title,
+                        title=article_data["title"],
                         content=article_data["content"],
                         source=article_data["source"],
                         url=article_data["url"],
@@ -88,15 +84,15 @@ class RelevanceFilter:
                         published_at=article_data["published_at"],
                         relevance_score=relevance_score
                     )
-                    logger.info(f"✅ Inserted relevant article '{title}' with score {relevance_score}")
+                    logger.info(f"✅ Inserted relevant article '{article_data['title']}' with score {relevance_score}")
                 else:
-                    logger.warning(f"⚠️ Article data not found for article ID: {article_id}")
+                    logger.warning(f"⚠️ Article data not found for article ID: {raw_article_id}")
             else:
                 self.irrelevant += 1
-                logger.info(f"❌ Article '{title}' is not relevant (score: {relevance_score})")
+                logger.info(f"❌ Article with ID '{raw_article_id}' is not relevant (score: {relevance_score})")
 
         except Exception as error:
-            logger.error(f"❌ Error processing result for {custom_id}: {error}")
+            logger.error(f"❌ Error processing result for article ID {raw_article_id}: {error}")
 
     def process_latest_results(self):
         """Process the most recent results file."""

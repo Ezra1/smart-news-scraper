@@ -100,13 +100,17 @@ class ArticleProcessor:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are an expert in pharmaceutical security and supply chain integrity. "
-                                     "Analyze articles and rate their relevance to these topics from 0-1."
+                            "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof. "
+                                     "Analyze articles and rate their relevance to these topics from 0-1 where "
+                                     "where 1 is highly relevant, 0.75 is moderately relevant, 0.5 is somewhat relevant, 0.25 is marginally relevant, and 0 is not relevant."
                         },
                         {
                             "role": "user",
-                            "content": f"Title: {article.get('title', '')}\n"
-                                     f"Content: {article.get('content', '')}"
+                            "content": 
+                                    f"Raw Article ID: {article.get('id', '')}\n"
+                                    f"Title: {article.get('url', '')}\n"
+                                    f"Content: {article.get('content', '')}"
+                                    f"URL: {article.get('url', '')}"
                         }
                     ],
                     max_tokens=250,
@@ -117,8 +121,9 @@ class ArticleProcessor:
                 if response.choices and response.choices[0].message:
                     logger.info(f"Remaining articles to process: {remaining_articles}")
                     return {
-                        'article_id': article.get('id'),
-                        'analysis': response.choices[0].message.content,
+                        'raw_article_id': article.get('id', 0),
+                        'url': article.get('url', ''),
+                        'analysis': response.choices[0].message.parsed.dict(),
                         'processed_at': datetime.now().isoformat()
                     }
                 

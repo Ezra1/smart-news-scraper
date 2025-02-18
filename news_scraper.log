@@ -4699,3 +4699,20 @@ SystemExit: 0
 2025-02-17 19:27:16 [ERROR] src.relevance_filtering:133 - OpenAI API error: Error code: 400 - {'error': {'message': "Invalid schema for response_format 'RatedArticle': In context=('properties', 'processed_at'), 'format' is not permitted.", 'type': 'invalid_request_error', 'param': 'response_format', 'code': None}}
 2025-02-17 19:27:47 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
 2025-02-17 19:27:47 [INFO] src.relevance_filtering:118 - Remaining articles to process: 0
+2025-02-17 20:39:47 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-02-17 20:39:47 [INFO] src.openai_relevance_processing:119 - Remaining articles to process: 0
+2025-02-17 20:39:47 [ERROR] src.insert_processed_articles:54 - ❌ Missing raw_article_id in result.
+2025-02-17 20:54:51 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-02-17 20:54:51 [INFO] src.openai_relevance_processing:121 - Remaining articles to process: 0
+2025-02-17 20:54:51 [ERROR] src.insert_processed_articles:54 - ❌ Missing raw_article_id in result.
+2025-02-17 20:59:48 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-02-17 20:59:48 [INFO] src.openai_relevance_processing:122 - Remaining articles to process: 0
+2025-02-17 20:59:48 [ERROR] src.insert_processed_articles:60 - ❌ Missing URL in result for article ID: 1652
+2025-02-17 21:03:55 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-02-17 21:03:55 [INFO] src.openai_relevance_processing:122 - Remaining articles to process: 0
+2025-02-17 21:03:55 [ERROR] src.openai_relevance_processing:138 - OpenAI API error: 'ParsedChatCompletionMessage[RatedArticle]' object has no attribute 'relevance_score'
+2025-02-17 21:04:34 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-02-17 21:04:34 [INFO] src.openai_relevance_processing:122 - Remaining articles to process: 0
+2025-02-17 21:04:34 [ERROR] src.openai_relevance_processing:138 - OpenAI API error: 'str' object has no attribute 'relevance_score'
+2025-02-17 21:10:16 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-02-17 21:10:16 [INFO] src.openai_relevance_processing:122 - Remaining articles to process: 0

@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -181,6 +181,23 @@ class ArticleManager:
         except sqlite3.Error as e:
             logging.error(f"Error retrieving articles: {e}")
             return None
+
+    def get_article_by_id(self, article_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve an article from the raw_articles table by its ID."""
+        query = "SELECT * FROM raw_articles WHERE id = ?"
+        result = self.db_manager.execute_query(query, (article_id,))
+        return result.fetchone()
+
+    def insert_cleaned_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float):
+        """Insert an article into the cleaned_articles table."""
+        query = """
+            INSERT INTO cleaned_articles (
+                raw_article_id, title, content, source, url, 
+                url_to_image, published_at, relevance_score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
+        self.db_manager.execute_query(query, params)
 
 class SearchTermManager:
     """Manages operations related to search terms, including insertion, retrieval, and batch loading."""
