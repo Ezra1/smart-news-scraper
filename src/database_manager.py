@@ -185,11 +185,13 @@ class ArticleManager:
         """Retrieve an article from the raw_articles table by its ID."""
         query = "SELECT * FROM raw_articles WHERE id = ?"
         result = self.db_manager.execute_query(query, (article_id,))
+        logger.info(f"get_article_by_id result: {result}")  # ADDED LOGGING
         # Return the first item if result exists, otherwise None
         return result[0] if result else None
 
     def insert_cleaned_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float):
         """Insert an article into the cleaned_articles table."""
+        logger.info(f"Inserting cleaned article with raw_article_id: {raw_article_id}")  # ADDED LOGGING
         query = """
             INSERT INTO cleaned_articles (
                 raw_article_id, title, content, source, url, 

@@ -3,7 +3,6 @@ import sys
 import time
 import asyncio
 from pydantic import BaseModel
-from datetime import datetime
 from typing import Optional, Dict, Any, List
 from openai import OpenAI, RateLimitError
 
@@ -62,6 +61,7 @@ class ArticleProcessor:
         requests_per_minute = config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
         self.rate_limiter = RateLimiter(requests_per_minute)
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
+        self.total_relevant = 0
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article."""
@@ -83,15 +83,16 @@ class ArticleProcessor:
         ]
 
     async def process_article(self, article: Dict[str, Any], remaining_articles: int) -> Optional[Dict[str, Any]]:
-        """Process a single article using the OpenAI API"""
+        """Process a single article using the OpenAI API and store relevant results in the database"""
         if not article:
             logger.error("Empty article provided")
-            return None
+            return
 
         self.rate_limiter.wait_if_needed()
 
         try:
             async with self.semaphore:
+                # Process article through OpenAI API
                 context_data = self.get_context_data(article)
                 
                 response = self.client.beta.chat.completions.parse(
@@ -100,8 +101,8 @@ class ArticleProcessor:
                         {
                             "role": "system",
                             "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof. "
-                                     "Analyze articles and rate their relevance to these topics from 0-1 where "
-                                     "where 1 is highly relevant, 0.75 is moderately relevant, 0.5 is somewhat relevant, 0.25 is marginally relevant, and 0 is not relevant."
+                                    "Analyze articles and rate their relevance to these topics from 0-1 where "
+                                    "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
                         },
                         {
                             "role": "user",
@@ -117,27 +118,49 @@ class ArticleProcessor:
                     response_format=RatedArticle
                 )
 
-                if response.choices and response.choices[0].message:
-                    parsed_response = response.choices[0].message.parsed
-                    relevance_score = parsed_response.relevance_score
+                if not response.choices or not response.choices[0].message:
+                    logger.error(f"No response received for article ID: {article.get('id', '')}")
+                    return
 
-                    logger.info(f"Remaining articles to process: {remaining_articles}")
-                    return {
-                        'raw_article_id': article.get('id', 0),
-                        'url': article.get('url', ''),
-                        'relevance_score': relevance_score,
-                        'processed_at': datetime.now().isoformat()
-                    }
-                
-                return None
+                # Extract relevance score from response
+                parsed_response = response.choices[0].message.parsed
+                relevance_score = parsed_response.relevance_score
+                raw_article_id = article.get('id')
+                url = article.get('url')
+
+                logger.info(f"Processing article - ID: {raw_article_id}, URL: {url}, Score: {relevance_score}")
+                logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
+
+                # Process and store relevant articles
+                if relevance_score >= self.RELEVANCE_THRESHOLD:
+                    logger.info(f"Article with ID '{raw_article_id}' is relevant (score: {relevance_score})")
+                    self.total_relevant += 1
+                    self.max_relevance_score = max(self.max_relevance_score, relevance_score)
+
+                    # Insert the article data into the cleaned_articles table
+                    self.article_manager.insert_cleaned_article(
+                        raw_article_id=raw_article_id,
+                        title=article.get('title'),
+                        content=article.get('content'),
+                        source=article.get('source'),
+                        url=url,
+                        url_to_image=article.get('url_to_image'),
+                        published_at=article.get('published_at'),
+                        relevance_score=relevance_score
+                    )
+                    logger.info(f"✅ Inserted relevant article '{article.get('title')}' with score {relevance_score}")
+                else:
+                    self.irrelevant += 1
+                    logger.info(f"❌ Article with ID '{raw_article_id}' is not relevant (score: {relevance_score})")
+
+                logger.info(f"Total relevant articles: {self.total_relevant}")
+                logger.info(f"Remaining articles to process: {remaining_articles}")
 
         except RateLimitError as e:
             logger.warning(f"Rate limit exceeded: {e}")
             await asyncio.sleep(10)
-            return None
         except Exception as e:
-            logger.error(f"OpenAI API error: {e}")
-            return None
+            logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
 
     async def process_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process multiple articles concurrently with rate limiting."""
@@ -162,9 +185,44 @@ class ArticleProcessor:
                 logger.error(f"Error processing article {idx}: {e}")
                 
         return results
+    
+    def analyze_results(self):
+        """Analyze the results after processing output."""
+        total_articles = self.relevant + self.irrelevant
+        if total_articles == 0:
+            logger.warning("⚠️ No articles processed.")
+            return
+
+        relevant_percentage = (self.relevant / total_articles) * 100
+        irrelevant_percentage = (self.irrelevant / total_articles) * 100
+        ratio = self.relevant / self.irrelevant if self.irrelevant > 0 else float('inf')
+
+        analysis_results = {
+            "Relevant articles": self.relevant,
+            "Irrelevant articles": self.irrelevant,
+            "Total articles": total_articles,
+            "Relevant percentage": f"{relevant_percentage:.2f}%",
+            "Irrelevant percentage": f"{irrelevant_percentage:.2f}%",
+            "Relevance ratio": f"{ratio:.2f}",
+            "Max relevance score": self.max_relevance_score
+        }
+
+        # Log and print results
+        for key, value in analysis_results.items():
+            logger.info(f"{key}: {value}")
+            print(f"{key}: {value}")
+
+        # Analysis conclusion
+        conclusion = (
+            "✅ Most articles are relevant, indicating well-targeted search."
+            if relevant_percentage > 50
+            else "⚠️ Most articles are irrelevant, suggesting search criteria refinement needed."
+        )
+        logger.info(conclusion)
+        print(conclusion)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logger.INFO)
+    logger.basicConfig(level=logger.INFO)
     try:
         db_manager = DatabaseManager()
         processor = ArticleProcessor()

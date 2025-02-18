@@ -10,7 +10,6 @@ from src.database_manager import DatabaseManager, ArticleManager, SearchTermMana
 from src.news_scraper import NewsArticleScraper
 from src.openai_relevance_processing import ArticleProcessor
 from src.extract_cleaned_articles import extract_cleaned_data
-from src.insert_processed_articles import RelevanceFilter
 from src.config import ConfigManager
 
 # Remove the old logging configuration and continue with existing code
@@ -63,7 +62,7 @@ async def main():
         
         search_manager = SearchTermManager(db)
         article_manager = ArticleManager(db)
-        processor = ArticleProcessor()  # Changed from BatchProcessor to ArticleProcessor
+        processor = ArticleProcessor()
         scraper = NewsArticleScraper(config_manager)
 
         search_terms_file = input("Enter path to search_terms.txt (leave blank for default): ").strip()
@@ -126,8 +125,9 @@ async def main():
                     if results:
                         # Initialize the RelevanceFilter with the article manager
                         relevance_filter = RelevanceFilter(article_manager)
-                        # Process the latest results for relevance
-                        relevance_filter.process_latest_results()
+                        
+
+
                         # Analyze the processed results
                         relevance_filter.analyze_results()
 

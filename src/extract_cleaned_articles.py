@@ -1,6 +1,7 @@
 import os
 import sqlite3
-import logging
+from src.logger_config import setup_logging
+logger = setup_logging(__name__)
 
 def extract_cleaned_data(db_path: str, output_file: str):
     """Extract cleaned and relevant data from the database and save it to a .txt file."""
@@ -26,16 +27,16 @@ def extract_cleaned_data(db_path: str, output_file: str):
                 file.write(f"URL: {url}\n")
                 file.write("\n" + "="*80 + "\n\n")
 
-        logging.info(f"Successfully extracted {len(articles)} articles to {output_file}")
+        logger.info(f"Successfully extracted {len(articles)} articles to {output_file}")
 
     except FileNotFoundError as e:
-        logging.error(f"File error: {e}")
+        logger.error(f"File error: {e}")
         print(f"Error: {e}")
     except sqlite3.Error as e:
-        logging.error(f"Database error: {e}")
+        logger.error(f"Database error: {e}")
         print(f"Error: {e}")
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logger.error(f"Error: {e}")
         print(f"Error: {e}")
     finally:
         if conn:
@@ -44,7 +45,7 @@ def extract_cleaned_data(db_path: str, output_file: str):
 if __name__ == "__main__":
     db_path = "/home/turambar/projects/smart-news-scraper/data/smart_news.db"
     if not os.path.exists(db_path):
-        logging.error(f"Database file not found: {db_path}")
+        logger.error(f"Database file not found: {db_path}")
         print(f"Error: Database file not found: {db_path}")
     else:
         output_file = "/home/turambar/projects/smart-news-scraper/output/cleaned_articles.txt"

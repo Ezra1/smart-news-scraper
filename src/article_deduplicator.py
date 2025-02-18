@@ -159,27 +159,3 @@ class ArticleDeduplicator:
         except Exception as e:
             logger.error(f"Article deduplication failed: {e}")
             return articles  # Return original articles if deduplication fails
-
-if __name__ == "__main__":
-    # Example Usage with error handling
-    try:
-        test_articles = [
-            {"id": 1, "title": "Breaking News", "content": "Important news content", 
-             "url": "https://example.com/news1"},
-            {"id": 2, "title": "Breaking News", "content": "Important news content", 
-             "url": "https://example.com/news1"},
-            {"id": 3, "title": "World Update", "content": "Some different content", 
-             "url": "https://example.com/news2"},
-            {"id": 4, "title": "Breaking News!", "content": "Important news content.", 
-             "url": "https://example.com/news3"},
-        ]
-
-        deduplicator = ArticleDeduplicator()
-        unique_articles = deduplicator.remove_duplicates(test_articles)
-
-        print(f"Initial article count: {len(test_articles)}")
-        print(f"Unique articles count: {len(unique_articles)}")
-        
-    except Exception as e:
-        logger.error(f"Error in deduplication example: {e}")
-        print("Deduplication process failed. Check logs for details.")
