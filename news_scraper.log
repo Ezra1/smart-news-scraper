@@ -4694,3 +4694,8 @@ SystemExit: 0
 2025-02-17 14:24:30 [WARNING] sort_cleaned_tables:130 - ⚠️ No articles processed.
 2025-02-17 14:24:30 [INFO] root:29 - Successfully extracted 0 articles to /home/turambar/projects/smart-news-scraper/output/cleaned_articles.txt
 2025-02-17 14:24:30 [INFO] __main__:151 - Database connection closed
+2025-02-17 19:26:18 [ERROR] src.relevance_filtering:133 - OpenAI API error: You tried to pass a `BaseModel` class to `chat.completions.create()`; You must use `beta.chat.completions.parse()` instead
+2025-02-17 19:27:16 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 400 Bad Request"
+2025-02-17 19:27:16 [ERROR] src.relevance_filtering:133 - OpenAI API error: Error code: 400 - {'error': {'message': "Invalid schema for response_format 'RatedArticle': In context=('properties', 'processed_at'), 'format' is not permitted.", 'type': 'invalid_request_error', 'param': 'response_format', 'code': None}}
+2025-02-17 19:27:47 [INFO] httpx:1025 - HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-02-17 19:27:47 [INFO] src.relevance_filtering:118 - Remaining articles to process: 0

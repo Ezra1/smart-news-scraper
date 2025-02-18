@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the necessary classes
-from src.database import DatabaseManager, ArticleManager
+from src.database_manager import DatabaseManager, ArticleManager
 
 # Create an instance of DatabaseManager
 db_manager = DatabaseManager()

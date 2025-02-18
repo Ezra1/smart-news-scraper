@@ -3,10 +3,10 @@ import sys
 import logging
 import time
 import asyncio
+from  pydantic import BaseModel
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
-from openai import OpenAIError, RateLimitError
+from openai import OpenAI, RateLimitError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(project_root)
 
-from database import ArticleManager, DatabaseManager
-from config import ConfigManager
+from src.database_manager import ArticleManager, DatabaseManager
+from src.config import ConfigManager
 
 class RateLimiter:
     def __init__(self, requests_per_minute: int):
@@ -44,6 +44,12 @@ class RateLimiter:
         # Update tracking
         self._last_request_time = time.time()
         self.request_times.append(self._last_request_time)
+
+class RatedArticle(BaseModel):
+    """Structured output schema for processed articles."""
+    raw_article_id: int
+    url: str
+    relevance_score: float
 
 class ArticleProcessor:
     def __init__(self):
@@ -89,13 +95,13 @@ class ArticleProcessor:
             async with self.semaphore:
                 context_data = self.get_context_data(article)
                 
-                response = self.client.chat.completions.create(
-                    model="gpt-4-turbo-preview",
+                response = self.client.beta.chat.completions.parse(
+                    model="gpt-4o-mini",
                     messages=[
                         {
                             "role": "system",
                             "content": "You are an expert in pharmaceutical security and supply chain integrity. "
-                                     "Analyze articles and rate their relevance to these topics."
+                                     "Analyze articles and rate their relevance to these topics from 0-1."
                         },
                         {
                             "role": "user",
@@ -104,7 +110,8 @@ class ArticleProcessor:
                         }
                     ],
                     max_tokens=250,
-                    temperature=0
+                    temperature=0,
+                    response_format=RatedArticle
                 )
 
                 if response.choices and response.choices[0].message:

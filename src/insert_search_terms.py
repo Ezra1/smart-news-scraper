@@ -1,5 +1,5 @@
 # In insert_search_terms.py
-from database import DatabaseManager, SearchTermManager
+from src.database_manager import DatabaseManager, SearchTermManager
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

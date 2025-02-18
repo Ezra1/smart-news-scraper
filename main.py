@@ -3,20 +3,15 @@ import logging
 import sys
 from pathlib import Path
 
-# Add the project root to the Python path
-current_dir = Path(__file__).resolve().parent
-src_dir = current_dir / "src"
-sys.path.append(str(src_dir))
-
 # Now import the modules
-from database import DatabaseManager, ArticleManager, SearchTermManager
-from news_scraper import NewsArticleScraper
-from relevance_filtering import ArticleProcessor
-from validation import ArticleValidator
-from duplication import ArticleDeduplicator
-from sort_cleaned_tables import RelevanceFilter
+from src.database import DatabaseManager, ArticleManager, SearchTermManager
+from src.news_scraper import NewsArticleScraper
+from src.relevance_filtering import ArticleProcessor
+from src.validation import ArticleValidator
+from src.duplication import ArticleDeduplicator
+from src.sort_cleaned_tables import RelevanceFilter
 from config import ConfigManager
-from extract_cleaned_data import extract_cleaned_data
+from src.extract_cleaned_data import extract_cleaned_data
 
 # Update logging configuration
 LOG_FILE = "news_scraper.log"
@@ -94,47 +89,67 @@ async def main():
         search_manager.insert_search_terms_from_txt(search_terms_file)
 
         try:
+            # Retrieve search terms from the database
             search_terms = search_manager.get_search_terms()
             if not search_terms:
+                # Log and print an error if no search terms are found, then exit
                 logger.error("No search terms found. Exiting.")
                 print("No search terms found. Exiting.")
                 return
 
             print("Fetching articles...")
+            # Fetch all articles based on the search terms
             articles = await scraper.fetch_all_articles(search_terms)
             if scraper.rate_limited:
+                # Print a message if rate limit is reached
                 print("Rate limit reached. Proceeding with available articles...")
-            
+
             if articles:
+                # Insert each fetched article into the database
                 for article in articles:
                     article_manager.insert_article(article, article['search_term_id'])
                 
+                # Print the number of articles being processed
                 print(f"Processing {len(articles)} articles...")
+                # Retrieve articles to process for relevance filtering
                 articles_to_process = article_manager.get_articles()
-                # Change: Add await since process_articles is now async
+                # Process the articles using the ArticleProcessor
                 results = await processor.process_articles(articles_to_process)
                 if results:
-                    print("Processing batch for relevance filtering...")
+                    # Print a message indicating the start of relevance filtering
+                    print("Processing for relevance filtering...")
+                    # Initialize the RelevanceFilter with the article manager
                     relevance_filter = RelevanceFilter(article_manager)
+                    # Process the latest results for relevance
                     relevance_filter.process_latest_results()
+                    # Analyze the processed results
                     relevance_filter.analyze_results()
             else:
+                # Print a message if no articles were fetched
                 print("No articles fetched. Proceeding with existing data...")
+                # Retrieve existing articles from the database
                 articles_to_process = article_manager.get_articles()
                 if articles_to_process:
+                    # Print a message indicating the processing of existing articles
                     print("Processing existing articles...")
-                    # Change: Add await since process_articles is now async
+                    # Process the existing articles using the ArticleProcessor
                     results = await processor.process_articles(articles_to_process)
                     if results:
+                        # Initialize the RelevanceFilter with the article manager
                         relevance_filter = RelevanceFilter(article_manager)
+                        # Process the latest results for relevance
                         relevance_filter.process_latest_results()
+                        # Analyze the processed results
                         relevance_filter.analyze_results()
 
+            # Print a message indicating the completion of processing
             print("\nProcessing completed.")
 
-            # Extract cleaned and relevant data
+            # Define the output file path for cleaned and relevant data
             output_file = "/home/turambar/projects/smart-news-scraper/output/cleaned_articles.txt"
+            # Extract cleaned and relevant data from the database and save it to the output file
             extract_cleaned_data(db_path, output_file)
+            # Print a message indicating the extraction of cleaned data
             print(f"Cleaned and relevant data extracted to {output_file}")
 
         except Exception as e:

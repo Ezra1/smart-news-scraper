@@ -4,7 +4,7 @@ import logging
 import re
 from dotenv import load_dotenv
 from pathlib import Path
-from database import DatabaseManager, ArticleManager
+from src.database_manager import DatabaseManager, ArticleManager
 from typing import Optional, Dict
 
 # Load environment variables and set up logging
@@ -12,11 +12,9 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Constants
-OUTPUT_DIR = Path("batch/output")
 
 class RelevanceFilter:
-    """Handles extraction and processing of batch results to determine article relevance."""
+    """Handles extraction and processing of results to determine article relevance."""
 
     def __init__(self, article_manager: ArticleManager):
         """Initialize with shared ArticleManager instance"""
@@ -45,7 +43,7 @@ class RelevanceFilter:
                 return None
 
     def process_result(self, result: Dict):
-        """Process a single batch result and insert relevant articles into cleaned_articles."""
+        """Process a single result and insert relevant articles into cleaned_articles."""
         try:
             custom_id = result.get("custom_id")
             if not custom_id:
@@ -101,11 +99,11 @@ class RelevanceFilter:
             logger.error(f"❌ Error processing result for {custom_id}: {error}")
 
     def process_latest_results(self):
-        """Process the most recent batch results file."""
+        """Process the most recent results file."""
         try:
             output_files = sorted(OUTPUT_DIR.glob("results_*.jsonl"), key=os.path.getmtime, reverse=True)
             if not output_files:
-                logger.error("❌ No batch output files found in the output directory.")
+                logger.error("❌ No output files found in the output directory.")
                 return
 
             latest_results_file = output_files[0]
@@ -119,12 +117,12 @@ class RelevanceFilter:
                     except json.JSONDecodeError as e:
                         logger.error(f"❌ Invalid JSON in results file: {e}")
 
-            logger.info("✅ Batch results processing complete.")
+            logger.info("✅ Results processing complete.")
         except Exception as error:
-            logger.error(f"❌ Error processing batch results: {error}")
+            logger.error(f"❌ Error processing results: {error}")
 
     def analyze_results(self):
-        """Analyze the results after processing batch output."""
+        """Analyze the results after processing output."""
         total_articles = self.relevant + self.irrelevant
         if total_articles == 0:
             logger.warning("⚠️ No articles processed.")
@@ -159,7 +157,6 @@ class RelevanceFilter:
         print(conclusion)
 
 if __name__ == "__main__":
-    # Example usage with proper database lifecycle
     db_manager = DatabaseManager()
     try:
         article_manager = ArticleManager(db_manager)
