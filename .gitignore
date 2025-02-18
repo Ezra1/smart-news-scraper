@@ -8,3 +8,4 @@ openAIFiles/batch_input.jsonl
 src/__pycache__
 tests/__pycache__
 batch/*
+config.json

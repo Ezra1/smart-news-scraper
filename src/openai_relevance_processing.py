@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import asyncio
+import logging  # Add this import for logging
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from openai import OpenAI, RateLimitError
@@ -61,7 +62,17 @@ class ArticleProcessor:
         requests_per_minute = config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
         self.rate_limiter = RateLimiter(requests_per_minute)
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
+        
+        # Initialize tracking variables
         self.total_relevant = 0
+        self.relevant = 0
+        self.irrelevant = 0
+        self.max_relevance_score = 0.0  # Add this line
+        self.RELEVANCE_THRESHOLD = config_manager.get("RELEVANCE_THRESHOLD")
+        logger.info(f"Initialized ArticleProcessor with relevance threshold: {self.RELEVANCE_THRESHOLD}")
+        
+        # Add database manager initialization
+        self.article_manager = ArticleManager(DatabaseManager())
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article."""
@@ -100,7 +111,7 @@ class ArticleProcessor:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof. "
+                            "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof."
                                     "Analyze articles and rate their relevance to these topics from 0-1 where "
                                     "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
                         },
@@ -108,8 +119,8 @@ class ArticleProcessor:
                             "role": "user",
                             "content": 
                                     f"Raw Article ID: {article.get('id', '')}\n"
-                                    f"Title: {article.get('url', '')}\n"
-                                    f"Content: {article.get('content', '')}"
+                                    f"Title: {article.get('title', '')}\n"
+                                    f"Content: {article.get('content', '')}\n"
                                     f"URL: {article.get('url', '')}"
                         }
                     ],
@@ -135,6 +146,7 @@ class ArticleProcessor:
                 if relevance_score >= self.RELEVANCE_THRESHOLD:
                     logger.info(f"Article with ID '{raw_article_id}' is relevant (score: {relevance_score})")
                     self.total_relevant += 1
+                    self.relevant += 1  # Increment relevant count
                     self.max_relevance_score = max(self.max_relevance_score, relevance_score)
 
                     # Insert the article data into the cleaned_articles table
@@ -222,7 +234,7 @@ class ArticleProcessor:
         print(conclusion)
 
 if __name__ == "__main__":
-    logger.basicConfig(level=logger.INFO)
+    logging.basicConfig(level=logging.INFO)  # Fix logging setup
     try:
         db_manager = DatabaseManager()
         processor = ArticleProcessor()
@@ -241,3 +253,4 @@ if __name__ == "__main__":
         sys.exit(1)
     finally:
         db_manager.close()
+

@@ -13,7 +13,7 @@ DEFAULT_CONFIG = {
     "NEWS_API_URL": "https://newsapi.org/v2/everything",
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
-    "RELEVANCE_THRESHOLD": 0.7,
+    "RELEVANCE_THRESHOLD": 0.6,
     "BATCH_SIZE": 100,
     "DATABASE_PATH": "news_articles.db",
     "LOGGING_LEVEL": "INFO",
@@ -28,7 +28,7 @@ class ConfigManager:
 
     def get_config_path(self) -> str:
         """Ensure config.json is stored in the main project directory, not src/."""
-        project_root = Path(__file__).resolve().parent.parent  # Go up from src/
+        project_root = Path(__file__).resolve().parent.parent
         return str(project_root / "config.json")
 
     def _load_config(self) -> Dict[str, Any]:
@@ -85,13 +85,21 @@ class ConfigManager:
         self.save_config(self.config)
 
     def validate(self) -> bool:
-        """Ensure required API keys exist."""
+        """Ensure required API keys exist and validate threshold."""
         required_keys = ["NEWS_API_KEY", "OPENAI_API_KEY"]
         missing_keys = [key for key in required_keys if not self.config.get(key)]
 
         if missing_keys:
             logger.error(f"Missing required configuration keys: {', '.join(missing_keys)}")
             return False
+            
+        # Validate relevance threshold
+        threshold = self.config.get("RELEVANCE_THRESHOLD")
+        if not isinstance(threshold, (int, float)) or not 0 <= threshold <= 1:
+            logger.error(f"Invalid RELEVANCE_THRESHOLD value: {threshold}. Must be between 0 and 1.")
+            return False
+            
+        logger.info(f"Configuration validated. Using relevance threshold: {threshold}")
         return True
 
 if __name__ == "__main__":

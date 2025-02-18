@@ -68,9 +68,12 @@ async def main():
         search_terms_file = input("Enter path to search_terms.txt (leave blank for default): ").strip()
         search_terms_file = search_terms_file if search_terms_file else "search_terms.txt"
 
-        delete_old = input("Delete old articles before starting? (Y/N): ").strip().lower() == "y"
-        if delete_old:
+        delete_old_raw = input("Delete old raw articles before starting? (Y/N): ").strip().lower() == "y"
+        if delete_old_raw:
             db.execute_query("DELETE FROM raw_articles;")
+
+        delete_old_clean = input("Delete old clean articles before starting? (Y/N): ").strip().lower() == "y"
+        if delete_old_clean:
             db.execute_query("DELETE FROM cleaned_articles;")
 
         print(f"Loading search terms from {search_terms_file}...")
@@ -135,10 +138,11 @@ async def main():
             print("\nProcessing completed.")
 
             # Define the output file path for cleaned and relevant data
-            output_file = "/home/turambar/projects/smart-news-scraper/output/cleaned_articles.txt"
+            desktop_path = str(Path.home() / "Desktop")
+            output_file = str(Path(desktop_path) / "cleaned_articles.txt")
+            
             # Extract cleaned and relevant data from the database and save it to the output file
             extract_cleaned_data(db_path, output_file)
-            # Print a message indicating the extraction of cleaned data
             print(f"Cleaned and relevant data extracted to {output_file}")
 
         except Exception as e:
