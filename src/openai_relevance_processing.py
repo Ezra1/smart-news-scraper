@@ -104,6 +104,12 @@ class ArticleProcessor:
         try:
             async with self.semaphore:
                 # Process article through OpenAI API
+                """{
+                            "role": "system",
+                            "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof."
+                                    "Analyze articles and rate their relevance to these topics from 0-1 where "
+                                    "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
+                    }"""
                 context_data = self.get_context_data(article)
                 
                 response = self.client.beta.chat.completions.parse(
@@ -111,8 +117,9 @@ class ArticleProcessor:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof."
-                                    "Analyze articles and rate their relevance to these topics from 0-1 where "
+                            "content": "You are an expert in the geopolitics, specifically in Saudi Arabia and Kuwait."
+                                    "Analyze articles and rate their relevance to anything that has the potential to change the balance of power in the middle east regarding Saudi Arabia and Kuwait or "
+                                    "Saudi Arabia and Kuwait's capabilities in the military or industrial sphere from 0-1 where"
                                     "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
                         },
                         {
