@@ -33740,3 +33740,26 @@ Trump’s oil agenda and the Gulf states’ energy transition
 2025-02-19 18:38:58,215 - src.extract_cleaned_articles - INFO - Successfully extracted 128 articles to /home/turambar/Desktop/cleaned_articles.txt
 2025-02-19 18:38:58,227 - __main__ - INFO - Database connection closed
 2025-02-19 18:54:38,755 - src.database_manager - INFO - Database connection successful
+2025-02-20 10:19:25,529 - src.database_manager - INFO - Database connection successful
+2025-02-20 10:32:37,606 - src.config - INFO - Configuration validated. Using relevance threshold: 0.6
+2025-02-20 10:32:39,204 - src.database_manager - INFO - Database connection successful
+2025-02-20 10:32:39,245 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-02-20 10:32:39,245 - src.database_manager - INFO - Database connection successful
+2025-02-20 10:32:42,031 - __main__ - INFO - Database connection closed
+2025-02-20 19:51:29,180 - src.database_manager - INFO - Database connection successful
+2025-03-12 11:31:37,554 - src.database_manager - INFO - Database connection successful
+2025-03-12 11:42:59,538 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:17:30,381 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:27:42,517 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:28:14,464 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:28:16,582 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:28:25,148 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:28:36,501 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:29:19,151 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:30:24,487 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:30:27,609 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:32:22,892 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:32:30,573 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:34:47,465 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:34:49,377 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:35:02,780 - src.database_manager - INFO - Database connection successful

@@ -128,9 +128,6 @@ async def main():
                     if results:
                         # Initialize the RelevanceFilter with the article manager
                         relevance_filter = RelevanceFilter(article_manager)
-                        
-
-
                         # Analyze the processed results
                         relevance_filter.analyze_results()
 
