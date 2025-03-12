@@ -5,63 +5,81 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+import threading
+from queue import Queue
 
 from src.logger_config import setup_logging
 logger = setup_logging(__name__)
 
 class DatabaseManager:
     """Manages SQLite database operations with enhanced connection management"""
+    _instance = None
+    _lock = threading.Lock()
+    _connection_pool = Queue(maxsize=10)  # Connection pool
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(DatabaseManager, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
 
     def __init__(self, db_path: str = "news_articles.db"):
-        """Initialize database connection and create tables if they don't exist"""
+        if self._initialized:
+            return
+            
         self.db_path = db_path
-        self._connection = None
-        self._create_tables()
+        self._initialized = True
+        self._populate_pool()
+        self._create_tables()  # Add this line
 
-    @property
-    def connection(self):
-        """Lazy connection initialization"""
-        if self._connection is None:
-            self._connection = sqlite3.connect(
+    def _populate_pool(self):
+        """Initialize connection pool"""
+        for _ in range(self._connection_pool.maxsize):
+            conn = sqlite3.connect(
                 self.db_path,
                 timeout=60.0,
-                isolation_level='IMMEDIATE'
+                isolation_level='IMMEDIATE',
+                check_same_thread=False
             )
-            self._connection.row_factory = sqlite3.Row
-        return self._connection
-
-    def close(self):
-        """Explicitly close the database connection"""
-        if self._connection is not None:
-            try:
-                self._connection.close()
-                self._connection = None
-            except sqlite3.Error as e:
-                logger.error(f"Error closing database connection: {e}")
+            conn.row_factory = sqlite3.Row
+            self._connection_pool.put(conn)
 
     @contextmanager
     def get_connection(self):
-        """Get a database connection with proper timeout and isolation level"""
+        """Get connection from pool with proper timeout and isolation level"""
+        connection = self._connection_pool.get()
         try:
-            yield self.connection
-            logger.info("Database connection successful")
-        except sqlite3.Error as e:
-            logger.error(f"Database connection error: {e}")
+            yield connection
+            self._connection_pool.put(connection)
+        except Exception as e:
+            self._connection_pool.put(connection)
             raise
+
+    def close(self):
+        """Explicitly close the database connection"""
+        try:
+            while not self._connection_pool.empty():
+                conn = self._connection_pool.get()
+                conn.close()
+        except sqlite3.Error as e:
+            logger.error(f"Error closing database connections: {e}")
 
     def execute_query(self, query: str, params: tuple = None) -> Optional[List[Dict]]:
         """Execute a SQL query with proper transaction handling"""
-        try:
-            cur = self.connection.cursor()
-            cur.execute(query, params or ())
-            if query.strip().upper().startswith("SELECT"):
-                return [dict(row) for row in cur.fetchall()]
-            self.connection.commit()
-            return None
-        except sqlite3.Error as e:
-            self.connection.rollback()
-            logger.error(f"Database query error: {e} | Query: {query}")
-            raise
+        with self.get_connection() as conn:
+            try:
+                cur = conn.cursor()
+                cur.execute(query, params or ())
+                if query.strip().upper().startswith("SELECT"):
+                    return [dict(row) for row in cur.fetchall()]
+                conn.commit()
+                return None
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error(f"Database query error: {e} | Query: {query}")
+                raise
 
     def __del__(self):
         """Ensure connection is closed when object is destroyed"""
@@ -279,4 +297,5 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
         print(f"Error: {e}")
+
         exit(1)

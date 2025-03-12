@@ -51,7 +51,7 @@ class RatedArticle(BaseModel):
     relevance_score: float
 
 class ArticleProcessor:
-    def __init__(self):
+    def __init__(self, db_manager: DatabaseManager = None):
         config_manager = ConfigManager()
         self.OPENAI_API_KEY = config_manager.get("OPENAI_API_KEY")
         
@@ -67,12 +67,16 @@ class ArticleProcessor:
         self.total_relevant = 0
         self.relevant = 0
         self.irrelevant = 0
-        self.max_relevance_score = 0.0  # Add this line
+        self.max_relevance_score = 0.0
         self.RELEVANCE_THRESHOLD = config_manager.get("RELEVANCE_THRESHOLD")
         logger.info(f"Initialized ArticleProcessor with relevance threshold: {self.RELEVANCE_THRESHOLD}")
         
-        # Add database manager initialization
-        self.article_manager = ArticleManager(DatabaseManager())
+        # Use provided database manager or create new one
+        self.db_manager = db_manager or DatabaseManager()
+        self.article_manager = ArticleManager(self.db_manager)
+        
+        # Add batch size configuration
+        self.batch_size = config_manager.get("BATCH_SIZE", 10)
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article."""
@@ -182,27 +186,18 @@ class ArticleProcessor:
             logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
 
     async def process_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Process multiple articles concurrently with rate limiting."""
-        tasks = []
+        """Process articles in optimized batches"""
         results = []
-        total_articles = len(articles)
-        
-        for idx, article in enumerate(articles):
-            remaining_articles = total_articles - idx - 1
-            task = asyncio.create_task(self.process_article(article, remaining_articles))
-            tasks.append(task)
-        
-        for idx, task in enumerate(asyncio.as_completed(tasks), 1):
-            try:
-                result = await task
-                if result:
-                    results.append(result)
-                    logger.info(f"Successfully processed article {idx}")
-                else:
-                    logger.error(f"Failed to process article {idx}")
-            except Exception as e:
-                logger.error(f"Error processing article {idx}: {e}")
-                
+        for i in range(0, len(articles), self.batch_size):
+            batch = articles[i:i + self.batch_size]
+            tasks = [
+                self.process_article(article, len(articles) - i - idx)
+                for idx, article in enumerate(batch)
+            ]
+            
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend([r for r in batch_results if not isinstance(r, Exception)])
+            
         return results
     
     def analyze_results(self):

@@ -33763,3 +33763,115 @@ Trump’s oil agenda and the Gulf states’ energy transition
 2025-03-12 13:34:47,465 - src.database_manager - INFO - Database connection successful
 2025-03-12 13:34:49,377 - src.database_manager - INFO - Database connection successful
 2025-03-12 13:35:02,780 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:37:26,608 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:37:34,920 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:39:52,352 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:39:54,910 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:40:15,838 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 13:40:15,839 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:40:15,839 - src.gui - ERROR - Processing error: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 131846363380672 and this is thread id 131846284555968.
+2025-03-12 13:40:25,466 - src.extract_cleaned_articles - INFO - Using relevance threshold from config: 0.6
+2025-03-12 13:40:25,468 - src.extract_cleaned_articles - INFO - Successfully extracted 128 articles to /home/turambar/Desktop/cleaned_articles.txt
+2025-03-12 13:42:23,118 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:42:31,249 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 13:42:31,249 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:42:31,249 - src.gui - ERROR - Processing error: SQLite objects created in a thread can only be used in that same thread. The object was created in thread id 138019132943296 and this is thread id 138019055552192.
+2025-03-12 13:50:24,492 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:50:26,324 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:50:28,694 - src.database_manager - INFO - Database connection successful
+2025-03-12 13:54:23,714 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 14:06:11,269 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 14:08:22,654 - src.news_scraper - WARNING - Rate limit reached. Skipping remaining terms.
+2025-03-12 14:08:22,655 - src.news_scraper - WARNING - Rate limit reached after processing 2884 articles.
+2025-03-12 14:08:22,655 - src.news_scraper - WARNING - Skipping remaining 134 terms.
+2025-03-12 14:08:22,685 - src.database_manager - INFO - Skipping duplicate article: https://www.naturalnews.com/2025-02-15-natural-supplements-industry-should-be-granted-immunity-lawsuits.html
+2025-03-12 14:08:22,685 - src.database_manager - INFO - Skipping duplicate article: https://freerepublic.com/focus/f-chat/4297730/posts
+2025-03-12 14:08:22,685 - src.database_manager - INFO - Skipping duplicate article: https://www.livemint.com/industry/spurious-drugs-in-india-counterfeit-medicines-drug-retailers-pharma-regulations-cdsco-drug-laws-drugs-and-cosmetics-act-11739337995106.html
+2025-03-12 14:08:23,530 - src.database_manager - INFO - Skipping duplicate article: https://www.globalsecurity.org/security/library/news/2025/02/sec-250213-arnews01.htm
+2025-03-12 14:08:23,530 - src.database_manager - INFO - Skipping duplicate article: https://screenrant.com/your-friendly-neighborhood-spider-man-villains-list/
+2025-03-12 14:08:23,571 - src.database_manager - INFO - Skipping duplicate article: https://economictimes.indiatimes.com/industry/healthcare/biotech/pharmaceuticals/surge-in-fake-medicines-in-retail-markets-leaving-druggists-distraught-traders-body/articleshow/118765250.cms
+2025-03-12 14:08:23,633 - src.database_manager - INFO - Skipping duplicate article: https://www.livemint.com/industry/indias-apex-drug-regulator-plans-to-ensure-medicine-labels-carry-name-of-authorized-person-responsible-for-the-batch-11739950849236.html
+2025-03-12 14:08:23,633 - src.database_manager - INFO - Skipping duplicate article: https://www.breitbart.com/latin-america/2025/02/17/report-brazilian-drug-gangs-massive-profits-ozempic/
+2025-03-12 14:08:23,633 - src.database_manager - INFO - Skipping duplicate article: https://www.npr.org/sections/shots-health-news/2025/02/17/nx-s1-5299288/semaglutide-wegovy-zepbound-compounding-pharmacy
+2025-03-12 14:08:23,633 - src.database_manager - INFO - Skipping duplicate article: https://www.hurriyetdailynews.com/tainted-alcohol-issue-persists-as-death-toll-rises-to-54-in-ankara-205924
+2025-03-12 14:08:23,633 - src.database_manager - INFO - Skipping duplicate article: https://www.finextra.com/blogposting/27856/fake-it-till-you-blockchain-it-how-tech-is-taking-on-the-counterfeit-industry
+2025-03-12 14:08:23,634 - src.database_manager - INFO - Skipping duplicate article: https://www.globenewswire.com/news-release/2025/02/14/3026773/0/en/Purple-Peel-Exploit-How-Mitolyn-Uses-Mitochondria-for-Weight-Loss.html
+2025-03-12 14:08:23,634 - src.database_manager - INFO - Skipping duplicate article: https://www.cbc.ca/news/canada/british-columbia/fish-bladders-traded-for-fentanyl-precursors-1.7458395
+2025-03-12 14:08:23,634 - src.database_manager - INFO - Skipping duplicate article: https://www.livemint.com/industry/spurious-drugs-in-india-counterfeit-medicines-drug-retailers-pharma-regulations-cdsco-drug-laws-drugs-and-cosmetics-act-11739337995106.html
+2025-03-12 14:08:23,641 - src.database_manager - INFO - Skipping duplicate article: https://nypost.com/2025/03/10/health/sex-hormones-may-be-behind-higher-opioid-deaths-among-men/
+2025-03-12 14:08:23,680 - src.database_manager - INFO - Skipping duplicate article: https://abcnews.go.com/Health/drug-overdose-deaths-fall-2023-1st-time-pandemic/story?id=119003775
+2025-03-12 14:08:23,680 - src.database_manager - INFO - Skipping duplicate article: https://www.newsweek.com/online-pharmaceutical-drugs-dea-fentanyl-2031422
+2025-03-12 14:08:23,680 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175247/apt/sidewinder-apt-targets-maritime-nuclear-sectors.html
+2025-03-12 14:08:23,681 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175232/breaking-news/u-s-cisa-adds-advantive-veracore-and-ivanti-epm-flaws-to-its-known-exploited-vulnerabilities-catalog.html
+2025-03-12 14:08:23,681 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175209/hacking/elon-musk-x-ddos-attack-dark-dark-storm-team.html
+2025-03-12 14:08:23,681 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175198/hacking/experts-warn-of-mass-exploitation-of-critical-php-flaw-cve-2024-4577.html
+2025-03-12 14:08:23,688 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175187/cyber-crime/ransomhouse-gang-claims-the-hack-of-the-loretto-hospital-in-chicago.html
+2025-03-12 14:08:23,688 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175178/apt/north-korea-linked-apt-moonstone-used-qilin-ransomware.html
+2025-03-12 14:08:23,688 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175169/breaking-news/miner-campaign-targeting-russian-users-with-silentcryptominer.html
+2025-03-12 14:08:23,688 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175156/cyber-crime/feds-seized-23-million-in-crypto-stolen-using-keys-from-lastpass-breaches.html
+2025-03-12 14:08:23,703 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175102/hacking/undocumented-hidden-feature-espressif-esp32-microchip.html
+2025-03-12 14:08:23,703 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175124/malware/security-affairs-malware-newsletter-round-36.html
+2025-03-12 14:08:23,703 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175115/security/security-affairs-newsletter-round-514-by-pierluigi-paganini-international-edition.html
+2025-03-12 14:08:23,703 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175103/cyber-crime/akira-ransomware-gang-used-unsecured-webcam-bypass-edr.html
+2025-03-12 14:08:23,703 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175090/data-breach/japanese-telecom-giant-ntt-data-breach.html
+2025-03-12 14:08:23,710 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175060/hacking/mirai-based-botnets-exploit-cve-2025-1316-zero-day-in-edimax-ip-cameras.html
+2025-03-12 14:08:23,711 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175061/security/differential-privacy-in-protecting-sensitive-information-in-the-era-of-artificial-intelligence.html
+2025-03-12 14:08:23,711 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175049/cyber-crime/international-law-enforcement-operation-seized-the-domain-of-the-russian-crypto-exchange-garantex.html
+2025-03-12 14:08:23,711 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175013/malware/medusa-ransomware-targeted-over-40-organizations-in-2025.html
+2025-03-12 14:08:23,718 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/175025/cyber-crime/qilin-ransomware-ministry-of-foreign-affairs-of-ukraine.html
+2025-03-12 14:08:23,718 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174999/security/elastic-kibana-critical-flaw.html
+2025-03-12 14:08:23,718 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174986/cyber-warfare-2/u-s-department-of-justice-doj-charges-12-chinese-nationals.html
+2025-03-12 14:08:23,718 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174976/apt/lotus-blossom-apt-sagerunex-backdoor.html
+2025-03-12 14:08:23,718 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174962/apt/china-linked-apt-silk-typhoon-targets-it-supply-chain.html
+2025-03-12 14:08:23,726 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174953/data-breach/ransomware-group-hunters-international-claims-to-have-hacked-tata-technologies.html
+2025-03-12 14:08:23,726 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174941/malware/new-eleven11bot-botnet-infected-86k-iot-devices.html
+2025-03-12 14:08:23,726 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174930/security/polish-space-agency-polsa-disconnected-its-network-following-a-cyberattack.html
+2025-03-12 14:08:23,726 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174923/security/u-s-cisa-adds-linux-kernel-and-vmware-esxi-and-workstation-flaws-to-its-known-exploited-vulnerabilities-catalog.html
+2025-03-12 14:08:23,726 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174911/security/vmware-fixed-three-actively-exploited-zero-days-in-esx-products.html
+2025-03-12 14:08:23,739 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174898/security/digital-nomads-and-risk-associated-with-the-threat-of-infiltred-employees.html
+2025-03-12 14:08:23,747 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174887/hacking/google-fixed-android-actively-exploited-flaws.html
+2025-03-12 14:08:23,747 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174873/cyber-crime/massive-attack-deploy-info-stealers-crypto-miners.html
+2025-03-12 14:08:23,747 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174862/intelligence/cisa-maintains-stance-on-russian-cyber-threats-despite-policy-shift.html
+2025-03-12 14:08:23,747 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174853/security/u-s-cisa-adds-multiple-cisco-small-business-rv-series-routers-hitachi-vantara-pentaho-ba-server-microsoft-windows-win32k-and-progress-whatsup-gold-flaws-to-its-known-exploited-vulnerabilities.html
+2025-03-12 14:08:23,754 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174845/cyber-crime/u-s-authorities-recovered-31-million-uranium-finance.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174822/breaking-news/serbian-student-activists-phone-hacked-using-cellebrite-zero-day-exploit.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174831/data-breach/qilin-ransomware-group-claims-responsibility-lee-enterprises-attack.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174816/malware/security-affairs-malware-newsletter-round-35.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174809/breaking-news/security-affairs-newsletter-round-513-by-pierluigi-paganini-international-edition.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174798/social-networks/meta-fired-20-employees-for-leaking-information.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174789/cyber-crime/ransomware-gangs-paragon-partition-manager-biontdrv-sys-driver-zero-day-attacks.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174779/cyber-crime/azure-abuse-scheme-individuals-exposed.html
+2025-03-12 14:08:23,755 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174769/hacking/attackers-could-hack-smart-solar-systems.html
+2025-03-12 14:08:23,770 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174762/malware/enhanced-capabilities-sustain-the-rapid-growth-of-vo1d-botnet.html
+2025-03-12 14:08:23,770 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174753/security/cisco-fixed-command-injection-and-dos-flaws-in-nexus-switches.html
+2025-03-12 14:08:23,770 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174743/intelligence/china-linked-threat-actors-stole-10-of-belgian-state-security-service-vsse-emails.html
+2025-03-12 14:08:23,770 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174735/cyber-crime/fbi-north-korea-responsible-bybit-hack.html
+2025-03-12 14:08:23,770 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174723/cyber-crime/uac-0173-targets-the-notary-office-of-ukraine.html
+2025-03-12 14:08:23,770 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174707/intelligence/cellebrite-blocked-serbia-from-using-its-solution-because-misuse-of-the-equipment-for-political-reasons.html
+2025-03-12 14:08:23,770 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174717/cyber-crime/dragonforce-ransomware-group-is-targeting-saudi-arabia.html
+2025-03-12 14:08:23,771 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174696/intelligence/ghostwriter-targets-ukrainian-gov-and-opposition-in-belarus.html
+2025-03-12 14:08:23,771 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174674/malware/new-lightspy-spyware-variant-data-collection-targets-social-media-platforms.html
+2025-03-12 14:08:23,771 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174664/security/u-s-cisa-adds-microsoft-partner-center-and-synacor-zimbra-collaboration-suite-flaws-to-its-known-exploited-vulnerabilities-catalog.html
+2025-03-12 14:08:23,771 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174651/malware/gitvenom-campaign-targets-gamers-and-crypto-investors.html
+2025-03-12 14:08:23,771 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174639/cyber-crime/lockbit-taunts-fbi-director-kash-patel.html
+2025-03-12 14:08:23,781 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174622/security/eu-sanctioned-the-leader-of-north-korea-linked-apt-groups.html
+2025-03-12 14:08:23,789 - src.database_manager - INFO - Skipping duplicate article: https://securityaffairs.com/174613/security/u-s-cisa-adds-adobe-coldfusion-and-oracle-agile-plm-flaws-to-its-known-exploited-vulnerabilities-catalog.html
+2025-03-12 14:08:23,844 - src.database_manager - ERROR - Error inserting article 'None': NOT NULL constraint failed: raw_articles.title
+2025-03-12 14:09:23,922 - src.database_manager - ERROR - Error inserting article 'Leaked Black Basta chat logs reveal the gang’s operations': database is locked
+2025-03-12 14:10:24,000 - src.database_manager - ERROR - Error inserting article 'U.S. CISA adds Microsoft Power Pages flaw to its Known Exploited Vulnerabilities catalog': database is locked
+2025-03-12 14:11:24,077 - src.database_manager - ERROR - Error inserting article 'SECURITY AFFAIRS MALWARE NEWSLETTER ROUND 34': database is locked
+2025-03-12 14:12:24,159 - src.database_manager - ERROR - Error inserting article 'Security Affairs newsletter Round 512 by Pierluigi Paganini – INTERNATIONAL EDITION': database is locked
+2025-03-12 14:13:24,243 - src.database_manager - ERROR - Error inserting article 'Lazarus APT stole $1.5B from Bybit, it is the largest cryptocurrency heist ever': database is locked
+2025-03-12 14:15:01,897 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 15:17:25,759 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 15:23:54,138 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 15:33:54,765 - src.openai_relevance_processing - INFO - Initialized ArticleProcessor with relevance threshold: 0.6
+2025-03-12 15:34:03,135 - src.news_scraper - WARNING - Rate limit reached. Skipping remaining terms.
+2025-03-12 15:34:03,135 - src.news_scraper - WARNING - Rate limit reached after processing 0 articles.
+2025-03-12 15:34:03,135 - src.news_scraper - WARNING - Skipping remaining 235 terms.
+2025-03-12 15:34:38,743 - src.news_scraper - WARNING - Rate limit reached. Skipping remaining terms.
+2025-03-12 15:34:38,743 - src.news_scraper - WARNING - Rate limit reached after processing 0 articles.
+2025-03-12 15:34:38,743 - src.news_scraper - WARNING - Skipping remaining 235 terms.
+2025-03-12 15:34:42,688 - src.news_scraper - WARNING - Rate limit reached. Skipping remaining terms.
+2025-03-12 15:34:42,688 - src.news_scraper - WARNING - Rate limit reached after processing 0 articles.
+2025-03-12 15:34:42,688 - src.news_scraper - WARNING - Skipping remaining 235 terms.
