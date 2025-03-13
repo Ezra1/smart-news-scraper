@@ -283,6 +283,18 @@ class SearchTermManager:
                 conn.rollback()
                 raise
 
+    def delete_search_term(self, term: str):
+        """Delete a search term from the database."""
+        try:
+            with self.db_manager.get_connection() as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM search_terms WHERE term = ?", (term,))
+                conn.commit()
+            logger.info(f"✅ Successfully deleted search term '{term}'.")
+        except sqlite3.Error as e:
+            logger.error(f"❌ Error deleting search term '{term}': {e}")
+            raise
+
 if __name__ == "__main__":
     try:
         db_path = input("Enter database file path (leave blank for default 'news_articles.db'): ").strip()

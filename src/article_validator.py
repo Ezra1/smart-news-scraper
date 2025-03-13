@@ -49,22 +49,12 @@ class ArticleValidator:
             return ""
             
         try:
-            # Unescape HTML entities first
-            text = html.unescape(text)
-            
-            # Create custom cleaner with strict security settings
+            # Create custom cleaner with simplified settings
             cleaner = bleach.Cleaner(
                 tags=self.allowed_tags,
                 attributes=self.allowed_attributes,
-                protocols=self.allowed_protocols,
                 strip=True,
-                filters=[
-                    # Custom filter for href attributes
-                    lambda tag, name, value: value 
-                    if name == 'href' and value and 
-                    value.startswith(('http:', 'https:'))
-                    else None
-                ]
+                strip_comments=True
             )
             
             # Clean the text
@@ -73,10 +63,6 @@ class ArticleValidator:
             # Additional sanitization steps
             soup = BeautifulSoup(text, 'html.parser')
             
-            # Remove comments
-            for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
-                comment.extract()
-                
             # Remove empty tags
             for tag in soup.find_all():
                 if len(tag.get_text(strip=True)) == 0 and tag.name != 'br':

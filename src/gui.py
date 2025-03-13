@@ -22,17 +22,18 @@ class NewsScraperGUI:
         self.root = ttkthemes.ThemedTk()
         self.root.set_theme("arc")  # Modern dark theme
         self.root.title("Smart News Scraper")
-        self.root.geometry("1200x800")  # Slightly larger for better white space
+        self.root.geometry("1200x1000")  # Slightly larger for better white space
         
         # Define color scheme
         self.colors = {
-            'primary': '#3498db',      # Blue
-            'secondary': '#2ecc71',    # Green
+            'primary': '#646F4B',      # Reseda Green
+            'secondary': '#46351D',    # Cafe Noir
             'accent': '#e74c3c',       # Red
             'bg_dark': '#2c3e50',      # Dark blue/gray
-            'bg_light': '#ecf0f1',     # Light gray
+            'bg_light': '#7BB2D9',     # Light blue
             'text_dark': '#2c3e50',    # Dark blue/gray
-            'text_light': '#ecf0f1',   # Light gray
+            'text_light': '#BFD2BF',   # Light gray
+            'disabled_text': '#95a5a6',  # Light gray
         }
         
         # Configure styles with modern color scheme
@@ -60,8 +61,8 @@ class NewsScraperGUI:
         
         # Primary button style
         self.style.configure("Primary.TButton",
-            background=self.colors['primary'],
-            foreground=self.colors['text_light']
+            background=self.colors['bg_dark'],
+            foreground=self.colors['text_dark']
         )
         
         # Secondary button style
@@ -92,9 +93,22 @@ class NewsScraperGUI:
             padding=(10, 5),
             font=("Segoe UI", 10, "bold")
         )
+        """
+                # Define color scheme
+        self.colors = {
+            'primary': '#646F4B',      # Reseda Green
+            'secondary': '#46351D',    # Cafe Noir
+            'accent': '#e74c3c',       # Red
+            'bg_dark': '#2c3e50',      # Dark blue/gray
+            'bg_light': '#7BB2D9',     # Light blue
+            'text_dark': '#2c3e50',    # Dark blue/gray
+            'text_light': '#BFD2BF',   # Light gray
+            'disabled_text': '#95a5a6'  # Light gray
+        }
+        """
         self.style.map("Primary.TButton",
-            foreground=[('active', '#ffffff'), ('!disabled', '#ffffff'), ('disabled', '#95a5a6')],
-            background=[('active', '#2980b9'), ('!disabled', '#3498db'), ('disabled', '#bdc3c7')]
+            foreground=[('active', self.colors['text_light']), ('!disabled', self.colors['text_light']), ('disabled', self.colors['disabled_text'])],
+            background=[('active', self.colors['bg_dark']), ('!disabled', '#3498db'), ('disabled', '#bdc3c7')]
         )
         
         self.style.configure("Secondary.TButton",
@@ -482,6 +496,45 @@ class NewsScraperGUI:
             justify='left'
         ).pack(anchor='w')
 
+        # Add step-by-step processing controls
+        steps_frame = ttk.LabelFrame(process_frame, text="Processing Steps", padding=15)
+        steps_frame.pack(fill='x', pady=15)
+
+        # Step buttons frame
+        step_btns_frame = ttk.Frame(steps_frame)
+        step_btns_frame.pack(fill='x', pady=5)
+
+        # Create step buttons
+        self.fetch_btn = ttk.Button(
+            step_btns_frame,
+            text="1. Fetch Articles",
+            command=self._start_fetch_only,
+            style="Secondary.TButton",
+            padding=(10, 5)
+        )
+        self.fetch_btn.pack(side='left', padx=5)
+
+        self.clean_btn = ttk.Button(
+            step_btns_frame,
+            text="2. Clean Articles",
+            command=self._start_cleaning_only,
+            style="Secondary.TButton",
+            padding=(10, 5)
+        )
+        self.clean_btn.pack(side='left', padx=5)
+
+        self.analyze_btn = ttk.Button(
+            step_btns_frame,
+            text="3. Analyze Relevance",
+            command=self._start_analysis_only,
+            style="Secondary.TButton",
+            padding=(10, 5)
+        )
+        self.analyze_btn.pack(side='left', padx=5)
+
+        # Add separator between step controls and main controls
+        ttk.Separator(process_frame, orient='horizontal').pack(fill='x', pady=15)
+
     def _create_results_tab(self):
         """Create enhanced results viewing tab with better visuals"""
         results_frame = ttk.Frame(self.notebook, padding="20")
@@ -783,6 +836,84 @@ class NewsScraperGUI:
             self._update_status("Processing stopped by user", is_warning=True)
             self.status_icon.configure(text="⏹️")
             self._processing = False
+
+    async def _fetch_articles_only(self):
+        """Process only the article fetching step"""
+        self._update_status("Fetching articles from news sources...")
+        search_terms = self.search_manager.get_search_terms()
+        if not search_terms:
+            self._update_status("No search terms defined. Please add search terms first.", is_error=True)
+            return None
+            
+        scraper = NewsArticleScraper(self.config_manager)
+        articles = await scraper.fetch_all_articles(search_terms)
+        
+        if articles:
+            self._update_status(f"Fetched {len(articles)} articles", is_success=True)
+        else:
+            self._update_status("No articles found", is_warning=True)
+        return articles
+
+    async def _clean_articles_only(self, articles=None):
+        """Process only the article cleaning step"""
+        if not articles:
+            articles = self.article_manager.get_articles()
+            
+        if not articles:
+            self._update_status("No articles to clean", is_warning=True)
+            return None
+            
+        self._update_status(f"Cleaning {len(articles)} articles...")
+        cleaned_articles = []
+        for idx, article in enumerate(articles):
+            clean_article = self.validator.clean_article(article)
+            if clean_article:
+                cleaned_articles.append(clean_article)
+                self._update_progress(idx + 1, len(articles))
+                
+        if cleaned_articles:
+            self._update_status(f"Cleaned {len(cleaned_articles)} articles", is_success=True)
+        else:
+            self._update_status("No articles passed cleaning", is_warning=True)
+        return cleaned_articles
+
+    async def _analyze_articles_only(self, articles=None):
+        """Process only the article analysis step"""
+        if not articles:
+            # Get most recently cleaned articles from database
+            articles = self.article_manager.get_articles()
+            
+        if not articles:
+            self._update_status("No articles to analyze", is_warning=True)
+            return None
+            
+        self._update_status(f"Analyzing relevance for {len(articles)} articles...")
+        results = await self.processor.process_articles(articles)
+        
+        if results:
+            self._update_status(f"Analyzed {len(results)} articles", is_success=True)
+            self._update_results_view(results)
+        else:
+            self._update_status("No relevant articles found", is_warning=True)
+        return results
+
+    def _start_fetch_only(self):
+        """Start only the fetch step"""
+        self.fetch_btn.config(state='disabled')
+        threading.Thread(target=lambda: asyncio.run(self._fetch_articles_only())).start()
+        self.fetch_btn.config(state='normal')
+
+    def _start_cleaning_only(self):
+        """Start only the cleaning step"""
+        self.clean_btn.config(state='disabled')
+        threading.Thread(target=lambda: asyncio.run(self._clean_articles_only())).start()
+        self.clean_btn.config(state='normal')
+
+    def _start_analysis_only(self):
+        """Start only the analysis step"""
+        self.analyze_btn.config(state='disabled')
+        threading.Thread(target=lambda: asyncio.run(self._analyze_articles_only())).start()
+        self.analyze_btn.config(state='normal')
 
     def _update_results_view(self, results):
         """Update results treeview in main thread with visual indicators"""
