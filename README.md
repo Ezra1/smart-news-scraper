@@ -1,36 +1,30 @@
-# Vision News Analyzer
+# Smart News Scraper
 
-## Overview
-**Vision News Analyzer** is an AI-powered tool that scrapes news articles based on predefined search terms, filters them for relevance using natural language processing, and processes associated images with object detection (powered by YOLO). This system is designed to deliver targeted insights by analyzing both text and visual data from news sources.
+A modern GUI application for scraping, analyzing, and managing news articles based on customizable search terms and AI-powered relevance filtering.
+
+![Smart News Scraper Screenshot](docs/images/app_screenshot.png)
 
 ## Features
-- **News Scraping**: Automatically scrape news articles from various sources using search terms.
-- **Relevance Filtering**: Use AI models to filter and rank articles based on relevance to a specified topic.
-- **Image Processing**: Perform object detection on images related to the articles, using the YOLO model.
-- **Customizable Search Terms**: Dynamically update search terms and topics of interest.
-- **REST API**: Expose a simple API to search and retrieve relevant articles and object detection results.
 
-## Getting Started
+- 📰 **Article Scraping**: Automatically fetch news articles using the NewsAPI
+- 🤖 **AI-Powered Analysis**: Evaluate article relevance using OpenAI's API
+- 🔍 **Custom Search Terms**: Manage and organize your search terms
+- 📊 **Visual Progress Tracking**: Real-time processing status and progress indicators
+- 💾 **Persistent Storage**: SQLite database for storing articles and search terms
+- 📁 **Import/Export**: Support for importing/exporting search terms and results
+- 🎨 **Modern UI**: Clean, intuitive interface with dark theme support
 
-### Prerequisites
-Before you can run this project, you’ll need to have the following installed:
-- **Python 3.8+**
-- **YOLO (You Only Look Once)**: For object detection in images.
-- **OpenAI API key**: For relevance filtering.
-- **News API key**: To fetch news articles (e.g., [NewsAPI](https://newsapi.org/)).
-- **Docker** (optional): For containerized deployment.
-
-### Installation
+## Installation
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/vision-news-analyzer.git
-   cd vision-news-analyzer
+   git clone https://github.com/yourusername/smart-news-scraper.git
+   cd smart-news-scraper
    ```
 
-2. **Set up a virtual environment** (recommended):
+2. **Create and activate a virtual environment**:
    ```bash
-   python3 -m venv venv
+   python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
@@ -39,66 +33,89 @@ Before you can run this project, you’ll need to have the following installed:
    pip install -r requirements.txt
    ```
 
-4. **Set up YOLO for object detection**:
-   - Download the pre-trained YOLO model weights (e.g., YOLOv5) and place them in the `models/yolo` directory.
-   - Follow the YOLO documentation for setting up and testing the model.
-
-5. **Set up environment variables**:
-   Create a `.env` file in the root directory with your API keys and configurations:
-   ```bash
+4. **Set up API keys**:
+   Create a `.env` file in the project root:
+   ```env
    NEWS_API_KEY=your_news_api_key
    OPENAI_API_KEY=your_openai_api_key
-   YOLO_MODEL_PATH=path/to/your/yolo/weights
    ```
 
-### Usage
+## Usage
 
-1. **Running the Application**:
-   - You can start the application by running the Python script:
-     ```bash
-     python app.py
-     ```
-
-2. **Scraping and Filtering News**:
-   - The system automatically scrapes articles using predefined search terms, scores their relevance using the OpenAI API, and stores relevant articles.
-   - You can update the search terms by editing the configuration in `config/search_terms.json`.
-
-3. **Object Detection in Images**:
-   - YOLO is used to detect specific objects in images associated with the articles. Detected objects are tagged and stored in the database.
-
-4. **API Endpoints**:
-   - The application exposes a REST API for retrieving articles and object detection results. You can query the data via the following endpoints:
-     - `GET /api/articles`: Retrieve relevant articles.
-     - `GET /api/articles/{id}/images`: Retrieve images and detected objects for a specific article.
-
-### Example Workflow
-1. Add a list of search terms in `config/search_terms.json`.
-2. Run the script to scrape and analyze news articles.
-3. Use the REST API to query for relevant articles and associated images.
-4. The system will return both text-based relevance and object detection results for each article.
-
-### Configuration
-
-- **Search Terms**: Configure the search terms for scraping in `config/search_terms.json`.
-- **YOLO Model**: Specify the YOLO model weights path in your `.env` file (`YOLO_MODEL_PATH`).
-- **Relevance Threshold**: Adjust the relevance score threshold in `config/relevance_threshold.json`.
-
-### Deployment
-
-For production, you can containerize the application using **Docker**:
-1. Build the Docker image:
+1. **Launch the application**:
    ```bash
-   docker build -t vision-news-analyzer .
-   ```
-2. Run the container:
-   ```bash
-   docker run -d -p 5000:5000 --env-file .env vision-news-analyzer
+   python -m src.gui
    ```
 
-### Contributing
+2. **Configure the Application**:
+   - Go to the "Configuration" tab
+   - Enter your API keys
+   - Adjust the relevance threshold
 
-Feel free to submit issues and pull requests if you'd like to contribute to the project.
+3. **Manage Search Terms**:
+   - Use the "Search Terms" tab
+   - Add/remove search terms
+   - Import terms from a file
+   - Export your term list
 
-### License
+4. **Process Articles**:
+   - Navigate to the "Processing" tab
+   - Choose between full processing or step-by-step:
+     - Fetch articles
+     - Clean article data
+     - Analyze relevance
+   - Monitor progress in real-time
+
+5. **View Results**:
+   - Check the "Results" tab
+   - Filter articles by relevance
+   - Search through results
+   - Export findings for further analysis
+
+## Configuration Options
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| Relevance Threshold | Minimum relevance score for articles | 0.7 |
+| News API Key | Your NewsAPI authentication key | None |
+| OpenAI API Key | Your OpenAI API key for analysis | None |
+
+## Development
+
+This project uses:
+- Python 3.8+
+- tkinter/ttk for the GUI
+- SQLite for data storage
+- NewsAPI for article fetching
+- OpenAI API for relevance analysis
+
+### Project Structure
+```
+smart-news-scraper/
+├── src/
+│   ├── gui.py              # Main GUI application
+│   ├── news_scraper.py     # News API integration
+│   ├── article_validator.py # Article validation
+│   ├── database_manager.py  # SQLite operations
+│   └── config.py           # Configuration management
+├── tests/                  # Unit tests
+└── docs/                   # Documentation
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Built with [ttkthemes](https://ttkthemes.readthedocs.io/) for modern UI
+- Powered by [OpenAI](https://openai.com/) for article analysis
+- News data provided by [NewsAPI](https://newsapi.org/)
