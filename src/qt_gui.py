@@ -485,6 +485,11 @@ class NewsScraperGUI(QMainWindow):
     def _create_processing_tab(self):
         process_widget = QWidget()
         layout = QVBoxLayout(process_widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        # Left side: Status and Controls
+        left_panel = QVBoxLayout()
 
         # Status group
         status_group = QGroupBox("Processing Status")
@@ -505,7 +510,7 @@ class NewsScraperGUI(QMainWindow):
         self.progress_bar.setMaximum(100)
         status_layout.addWidget(self.progress_bar)
 
-        layout.addWidget(status_group)
+        left_panel.addWidget(status_group)
 
         # Control buttons
         btn_layout = QHBoxLayout()
@@ -518,7 +523,7 @@ class NewsScraperGUI(QMainWindow):
 
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.stop_btn)
-        layout.addLayout(btn_layout)
+        left_panel.addLayout(btn_layout)
 
         # Step controls
         steps_group = QGroupBox("Processing Steps")
@@ -535,8 +540,118 @@ class NewsScraperGUI(QMainWindow):
         steps_layout.addWidget(clean_btn)
         steps_layout.addWidget(analyze_btn)
 
-        layout.addWidget(steps_group)
+        left_panel.addWidget(steps_group)
+
+        # Right side: Database Preview
+        right_panel = QVBoxLayout()
+
+        # Raw Articles Preview
+        raw_group = QGroupBox("Raw Articles Preview")
+        raw_layout = QVBoxLayout(raw_group)
+        
+        # Create scroll area for raw preview
+        raw_scroll = QScrollArea()
+        raw_scroll.setWidgetResizable(True)
+        raw_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        raw_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        raw_container = QWidget()
+        raw_container_layout = QVBoxLayout(raw_container)
+        
+        self.raw_preview = QTreeWidget()
+        self.raw_preview.setHeaderLabels(["ID", "Title", "URL"])
+        self.raw_preview.setMinimumHeight(200)
+        raw_container_layout.addWidget(self.raw_preview)
+        
+        raw_scroll.setWidget(raw_container)
+        raw_layout.addWidget(raw_scroll)
+        
+        raw_controls = QHBoxLayout()
+        raw_controls.addWidget(QLabel("Total Raw Articles: "))
+        self.raw_count_label = QLabel("0")
+        raw_controls.addWidget(self.raw_count_label)
+        raw_controls.addStretch()
+        clear_raw_btn = QPushButton("Clear Raw Articles")
+        clear_raw_btn.clicked.connect(self._clear_raw_articles)
+        raw_controls.addWidget(clear_raw_btn)
+        raw_layout.addLayout(raw_controls)
+        
+        right_panel.addWidget(raw_group)
+
+        # Cleaned Articles Preview
+        cleaned_group = QGroupBox("Cleaned Articles Preview")
+        cleaned_layout = QVBoxLayout(cleaned_group)
+        
+        # Create scroll area for cleaned preview
+        cleaned_layout.addLayout(cleaned_controls)
+        
+        right_panel.addWidget(cleaned_group)
+
+        # Combine panels in horizontal layout
+        panels_layout = QHBoxLayout()
+        left_widget = QWidget()
+        left_widget.setLayout(left_panel)
+        right_widget = QWidget()
+        right_widget.setLayout(right_panel)
+        
+        panels_layout.addWidget(left_widget)
+        panels_layout.addWidget(right_widget)
+        layout.addLayout(panels_layout)
+
         self.tabs.addTab(process_widget, "Processing")
+        
+        # Initial preview update
+        self._update_previews()
+
+    def _update_previews(self):
+        # Update raw articles preview
+        self.raw_preview.clear()
+        raw_articles = self.db_manager.execute_query("SELECT id, title, url FROM raw_articles ORDER BY id DESC LIMIT 5")
+        raw_count = len(self.db_manager.execute_query("SELECT id FROM raw_articles"))
+        self.raw_count_label.setText(str(raw_count))
+        
+        for article in raw_articles:
+            item = QTreeWidgetItem([str(article['id']), article['title'], article['url']])
+            self.raw_preview.addTopLevelItem(item)
+
+        # Update cleaned articles preview
+        self.cleaned_preview.clear()
+        cleaned_articles = self.db_manager.execute_query(
+            "SELECT id, title, relevance_score FROM cleaned_articles ORDER BY id DESC LIMIT 5"
+        )
+        cleaned_count = len(self.db_manager.execute_query("SELECT id FROM cleaned_articles"))
+        self.cleaned_count_label.setText(str(cleaned_count))
+        
+        for article in cleaned_articles:
+            score = f"{article.get('relevance_score', 0):.2f}"
+            item = QTreeWidgetItem([str(article['id']), article['title'], score])
+            self.cleaned_preview.addTopLevelItem(item)
+
+    def _clear_raw_articles(self):
+        reply = QMessageBox.question(
+            self, 
+            'Confirm Clear',
+            'Are you sure you want to clear all raw articles?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.db_manager.execute_query("DELETE FROM raw_articles")
+            self._update_previews()
+            QMessageBox.information(self, "Success", "Raw articles cleared successfully")
+
+    def _clear_cleaned_articles(self):
+        reply = QMessageBox.question(
+            self, 
+            'Confirm Clear',
+            'Are you sure you want to clear all cleaned articles?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            self.db_manager.execute_query("DELETE FROM cleaned_articles")
+            self._update_previews()
+            QMessageBox.information(self, "Success", "Cleaned articles cleared successfully")
 
     def _create_results_tab(self):
         results_widget = QWidget()
@@ -794,6 +909,7 @@ class NewsScraperGUI(QMainWindow):
                 self.article_manager.insert_article(article, article['search_term_id'])
         else:
             QMessageBox.warning(self, "Info", f"No new articles fetched\n{counts_msg}")
+        self._update_previews()
 
     def _process_clean_results(self, articles):
         self.start_btn.setEnabled(True)
@@ -803,6 +919,7 @@ class NewsScraperGUI(QMainWindow):
                 self.article_manager.update_article(article)
         else:
             QMessageBox.warning(self, "Warning", "No articles were cleaned")
+        self._update_previews()
 
     def _show_context_menu(self, position):
         item = self.results_tree.itemAt(position)
