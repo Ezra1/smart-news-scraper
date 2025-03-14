@@ -2,7 +2,7 @@ import re
 import html
 import bleach
 from dateutil import parser
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional, Set
 from bs4 import BeautifulSoup, Comment
 from urllib.parse import urlparse, urljoin
@@ -123,7 +123,7 @@ class ArticleValidator:
 
     def validate_date(self, date_str: str) -> Optional[datetime]:
         """
-        Parse and validate date string with additional checks.
+        Parse and validate date string with timezone awareness.
         
         Args:
             date_str (str): Date string to validate
@@ -135,16 +135,23 @@ class ArticleValidator:
             return None
             
         try:
+            # Parse the date string into a timezone-aware datetime
             parsed_date = parser.parse(date_str)
+            if parsed_date.tzinfo is None:
+                # If the parsed date has no timezone, assume UTC
+                parsed_date = parsed_date.replace(tzinfo=timezone.utc)
             
-            # Additional validation checks
-            current_date = datetime.now()
+            # Get current time in UTC
+            current_date = datetime.now(timezone.utc)
+            
+            # Ensure reasonable past date (e.g., not before 2000)
+            min_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+            
             if parsed_date > current_date:
                 logger.warning(f"Future date detected: {date_str}")
                 return None
                 
-            # Ensure reasonable past date (e.g., not before 2000)
-            if parsed_date.year < 2000:
+            if parsed_date < min_date:
                 logger.warning(f"Date too old: {date_str}")
                 return None
                 

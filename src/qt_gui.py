@@ -85,12 +85,28 @@ class ProcessingWorker(QThread):
                         self.progress_updated.emit(processed, total)
                 else:
                     cleaned_articles = articles
+                    processed += 1
+                    self.progress_updated.emit(processed, total)
 
             if cleaned_articles and self._is_running:
                 if self.processor:
-                    results = await self.processor.process_articles(cleaned_articles)
-                    self.completed.emit(results)
-                    self.status_updated.emit(f"Processing completed. {counts_msg}", False, False, True)
+                    self.status_updated.emit("Starting OpenAI analysis...", False, False, False)
+                    processed = 0
+                    relevant_articles = []
+                    
+                    for article in cleaned_articles:
+                        if not self._is_running:
+                            break
+                            
+                        result = await self.processor.process_article(article, len(cleaned_articles) - processed)
+                        processed += 1
+                        self.progress_updated.emit(processed, len(cleaned_articles))
+                        
+                        if result:
+                            relevant_articles.append(result)
+                            
+                    self.completed.emit(relevant_articles)
+                    self.status_updated.emit(f"Analysis completed. Found {len(relevant_articles)} relevant articles. {counts_msg}", False, False, True)
                 else:
                     self.completed.emit(cleaned_articles)
                     self.status_updated.emit(f"Processing completed. {counts_msg}", False, False, True)
@@ -665,8 +681,8 @@ class NewsScraperGUI(QMainWindow):
 
     def _update_progress(self, current, total):
         if total > 0:
-            percentage = (current / total) * 100
-            self.progress_bar.setValue(percentage)
+            percentage = round((current / total) * 100)  # Round to nearest integer
+            self.progress_bar.setValue(int(percentage))  # Explicitly convert to int
             self.progress_counter.setText(f"{current}/{total} articles processed")
 
     def _update_status(self, message, is_error, is_warning, is_success):
