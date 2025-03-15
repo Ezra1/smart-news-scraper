@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QPushButton, QLabel, QVBoxLayout,
     QHBoxLayout, QTabWidget, QLineEdit, QFrame, QListWidget, QProgressBar,
     QScrollArea, QTreeWidget, QTreeWidgetItem, QMessageBox, QFileDialog,
-    QComboBox, QSlider, QInputDialog, QGroupBox, QMenu
+    QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QAction
@@ -54,12 +54,11 @@ class ProcessingWorker(QThread):
                     articles = self.db_manager.execute_query("SELECT * FROM raw_articles")
                     if articles:
                         self.status_updated.emit(f"Processing {len(articles)} existing articles from database", False, False, True)
-            elif self.validator:
-                articles = self.search_terms  # In this case search_terms contains articles to clean
-            else:
-                articles = self.search_terms  # For analysis only
 
-            # Get article counts
+            elif self.validator or self.processor:
+                articles = self.search_terms
+
+            # Get article counts for status messages
             raw_count = len(self.db_manager.execute_query("SELECT id FROM raw_articles"))
             clean_count = len(self.db_manager.execute_query("SELECT id FROM cleaned_articles"))
             counts_msg = f"Database contains: {raw_count} raw articles, {clean_count} cleaned articles"
@@ -77,6 +76,7 @@ class ProcessingWorker(QThread):
                 if not self._is_running:
                     break
 
+                # Clean articles if validator is present
                 if self.validator:
                     clean_article = self.validator.clean_article(article)
                     if clean_article:
@@ -84,11 +84,13 @@ class ProcessingWorker(QThread):
                         processed += 1
                         self.progress_updated.emit(processed, total)
                 else:
-                    cleaned_articles = articles
+                    # If no validator, use articles as is
+                    cleaned_articles.append(article)
                     processed += 1
                     self.progress_updated.emit(processed, total)
 
             if cleaned_articles and self._is_running:
+                # Process through OpenAI if processor is present
                 if self.processor:
                     self.status_updated.emit("Starting OpenAI analysis...", False, False, False)
                     processed = 0
@@ -104,10 +106,11 @@ class ProcessingWorker(QThread):
                         
                         if result:
                             relevant_articles.append(result)
-                            
+                    
                     self.completed.emit(relevant_articles)
                     self.status_updated.emit(f"Analysis completed. Found {len(relevant_articles)} relevant articles. {counts_msg}", False, False, True)
                 else:
+                    # If no processor, return cleaned articles
                     self.completed.emit(cleaned_articles)
                     self.status_updated.emit(f"Processing completed. {counts_msg}", False, False, True)
             else:
@@ -491,10 +494,11 @@ class NewsScraperGUI(QMainWindow):
         # Left side: Status and Controls
         left_panel = QVBoxLayout()
 
-        # Status group
+        # Enhanced Status group
         status_group = QGroupBox("Processing Status")
         status_layout = QVBoxLayout(status_group)
 
+        # Overall status
         status_box = QHBoxLayout()
         self.status_icon = QLabel("🟢")
         self.status_label = QLabel("Ready to process articles")
@@ -502,7 +506,40 @@ class NewsScraperGUI(QMainWindow):
         status_box.addWidget(self.status_label)
         status_layout.addLayout(status_box)
 
-        # Progress
+        # Phase indicators
+        phase_group = QGroupBox("Current Phase")
+        phase_layout = QGridLayout(phase_group)
+        
+        # Fetch phase
+        self.fetch_icon = QLabel("⭕")
+        self.fetch_status = QLabel("Fetching: Waiting")
+        self.fetch_progress = QProgressBar()
+        self.fetch_progress.setMaximum(100)
+        phase_layout.addWidget(self.fetch_icon, 0, 0)
+        phase_layout.addWidget(self.fetch_status, 0, 1)
+        phase_layout.addWidget(self.fetch_progress, 0, 2)
+        
+        # Clean phase
+        self.clean_icon = QLabel("⭕")
+        self.clean_status = QLabel("Cleaning: Waiting")
+        self.clean_progress = QProgressBar()
+        self.clean_progress.setMaximum(100)
+        phase_layout.addWidget(self.clean_icon, 1, 0)
+        phase_layout.addWidget(self.clean_status, 1, 1)
+        phase_layout.addWidget(self.clean_progress, 1, 2)
+        
+        # Analyze phase
+        self.analyze_icon = QLabel("⭕")
+        self.analyze_status = QLabel("Analysis: Waiting")
+        self.analyze_progress = QProgressBar()
+        self.analyze_progress.setMaximum(100)
+        phase_layout.addWidget(self.analyze_icon, 2, 0)
+        phase_layout.addWidget(self.analyze_status, 2, 1)
+        phase_layout.addWidget(self.analyze_progress, 2, 2)
+
+        status_layout.addWidget(phase_group)
+
+        # Overall progress
         self.progress_counter = QLabel("0/0 articles processed")
         status_layout.addWidget(self.progress_counter)
 
@@ -583,6 +620,30 @@ class NewsScraperGUI(QMainWindow):
         cleaned_layout = QVBoxLayout(cleaned_group)
         
         # Create scroll area for cleaned preview
+        cleaned_scroll = QScrollArea()
+        cleaned_scroll.setWidgetResizable(True)
+        cleaned_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        cleaned_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        cleaned_container = QWidget()
+        cleaned_container_layout = QVBoxLayout(cleaned_container)
+        
+        self.cleaned_preview = QTreeWidget()
+        self.cleaned_preview.setHeaderLabels(["ID", "Title", "Score"])
+        self.cleaned_preview.setMinimumHeight(200)
+        cleaned_container_layout.addWidget(self.cleaned_preview)
+        
+        cleaned_scroll.setWidget(cleaned_container)
+        cleaned_layout.addWidget(cleaned_scroll)
+        
+        cleaned_controls = QHBoxLayout()
+        cleaned_controls.addWidget(QLabel("Total Cleaned Articles: "))
+        self.cleaned_count_label = QLabel("0")
+        cleaned_controls.addWidget(self.cleaned_count_label)
+        cleaned_controls.addStretch()
+        clear_cleaned_btn = QPushButton("Clear Cleaned Articles")
+        clear_cleaned_btn.clicked.connect(self._clear_cleaned_articles)
+        cleaned_controls.addWidget(clear_cleaned_btn)
         cleaned_layout.addLayout(cleaned_controls)
         
         right_panel.addWidget(cleaned_group)
@@ -606,7 +667,7 @@ class NewsScraperGUI(QMainWindow):
     def _update_previews(self):
         # Update raw articles preview
         self.raw_preview.clear()
-        raw_articles = self.db_manager.execute_query("SELECT id, title, url FROM raw_articles ORDER BY id DESC LIMIT 5")
+        raw_articles = self.db_manager.execute_query("SELECT id, title, url FROM raw_articles ORDER BY id DESC LIMIT 100")
         raw_count = len(self.db_manager.execute_query("SELECT id FROM raw_articles"))
         self.raw_count_label.setText(str(raw_count))
         
@@ -617,13 +678,13 @@ class NewsScraperGUI(QMainWindow):
         # Update cleaned articles preview
         self.cleaned_preview.clear()
         cleaned_articles = self.db_manager.execute_query(
-            "SELECT id, title, relevance_score FROM cleaned_articles ORDER BY id DESC LIMIT 5"
+            "SELECT id, title, relevance_score FROM cleaned_articles ORDER BY id DESC LIMIT 100"
         )
         cleaned_count = len(self.db_manager.execute_query("SELECT id FROM cleaned_articles"))
         self.cleaned_count_label.setText(str(cleaned_count))
         
         for article in cleaned_articles:
-            score = f"{article.get('relevance_score', 0):.2f}"
+            score = f"{article.get('relevance_score', 0):.2f}"  # Fixed double colon typo
             item = QTreeWidgetItem([str(article['id']), article['title'], score])
             self.cleaned_preview.addTopLevelItem(item)
 
@@ -761,6 +822,7 @@ class NewsScraperGUI(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to export search terms: {e}")
 
     def _start_processing(self):
+        """Start complete processing workflow"""
         if not self.search_manager.get_search_terms():
             QMessageBox.warning(self, "Warning", "No search terms defined. Please add search terms first.")
             return
@@ -779,11 +841,33 @@ class NewsScraperGUI(QMainWindow):
             db_manager=self.db_manager
         )
         
+        # Connect all necessary signals
         self.worker.progress_updated.connect(self._update_progress)
         self.worker.status_updated.connect(self._update_status)
-        self.worker.completed.connect(self._update_results)
+        self.worker.completed.connect(self._handle_processing_complete)
         
         self.worker.start()
+
+    def _handle_processing_complete(self, results):
+        """Handle completion of processing with proper UI updates"""
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self._processing = False
+        
+        if results:
+            # Mark all phases as complete
+            self._update_phase_status('fetch', "Complete", 100, is_complete=True)
+            self._update_phase_status('clean', "Complete", 100, is_complete=True)
+            self._update_phase_status('analyze', "Complete", 100, is_complete=True)
+            
+            # Update results tab
+            self._update_results(results)
+            self._update_previews()
+            QMessageBox.information(self, "Success", f"Processed {len(results)} articles successfully")
+        else:
+            self._reset_phase_statuses()
+            QMessageBox.warning(self, "Warning", "No articles were processed")
+            self._update_previews()
 
     def _stop_processing(self):
         if self.worker:
@@ -793,6 +877,7 @@ class NewsScraperGUI(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.status_icon.setText("⏹️")
         self.status_label.setText("Processing stopped by user")
+        self._reset_phase_statuses()
 
     def _update_progress(self, current, total):
         if total > 0:
@@ -801,11 +886,24 @@ class NewsScraperGUI(QMainWindow):
             self.progress_counter.setText(f"{current}/{total} articles processed")
 
     def _update_status(self, message, is_error, is_warning, is_success):
+        """Enhanced status updates with phase tracking"""
         self.status_label.setText(message)
         self.statusBar().showMessage(message)
         
+        # Update phase statuses based on message content
+        if "fetching" in message.lower():
+            self._update_phase_status('fetch', "In Progress")
+        elif "cleaning" in message.lower():
+            self._update_phase_status('fetch', "Complete", 100, is_complete=True)
+            self._update_phase_status('clean', "In Progress")
+        elif "analyzing" in message.lower():
+            self._update_phase_status('clean', "Complete", 100, is_complete=True)
+            self._update_phase_status('analyze', "In Progress")
+        
         if is_error:
             self.status_icon.setText("❌")
+            current_phase = 'fetch' if "fetching" in message.lower() else 'clean' if "cleaning" in message.lower() else 'analyze'
+            self._update_phase_status(current_phase, "Error", is_error=True)
         elif is_warning:
             self.status_icon.setText("⚠️")
         elif is_success:
@@ -813,44 +911,51 @@ class NewsScraperGUI(QMainWindow):
         else:
             self.status_icon.setText("🔄")
 
-    def _update_results(self, results):
-        self.all_results = results  # Store for filtering
-        self.results_tree.clear()
-        for result in results:
-            self._add_result_item(result)
+    def _update_phase_status(self, phase, status, progress=0, is_error=False, is_complete=False):
+        """Update the status of a specific processing phase"""
+        icon_map = {
+            'fetch': self.fetch_icon,
+            'clean': self.clean_icon,
+            'analyze': self.analyze_icon
+        }
+        status_map = {
+            'fetch': self.fetch_status,
+            'clean': self.clean_status,
+            'analyze': self.analyze_status
+        }
+        progress_map = {
+            'fetch': self.fetch_progress,
+            'clean': self.clean_progress,
+            'analyze': self.analyze_progress
+        }
 
-    def _add_result_item(self, result):
-        item = QTreeWidgetItem([
-            result.get('title', ''),
-            f"{float(result.get('relevance_score', 0)):.2f}",
-            result.get('url', '')
-        ])
-        
-        relevance = result.get('relevance_score', 0)
-        if relevance >= 0.7:
-            item.setBackground(0, Qt.GlobalColor.green)
-        elif relevance >= 0.4:
-            item.setBackground(0, Qt.GlobalColor.yellow)
-        else:
-            item.setBackground(0, Qt.GlobalColor.red)
-            
-        self.results_tree.addTopLevelItem(item)
+        if phase in icon_map:
+            # Update icon
+            if is_error:
+                icon_map[phase].setText("❌")
+            elif is_complete:
+                icon_map[phase].setText("✅")
+            else:
+                icon_map[phase].setText("🔄")
 
-    def _export_results(self):
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Results As",
-            str(Path.home() / "Desktop"),
-            "Text Files (*.txt);;CSV Files (*.csv);;All Files (*)"
-        )
-        
-        if file_path:
-            try:
-                from src.extract_cleaned_articles import extract_cleaned_data
-                extract_cleaned_data(self.db_manager.db_path, file_path)
-                QMessageBox.information(self, "Success", f"Results exported to {file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to export results: {e}")
+            # Update status text
+            status_map[phase].setText(f"{phase.title()}: {status}")
+
+            # Update progress
+            if progress >= 0:
+                progress_map[phase].setValue(int(progress))
+
+    def _reset_phase_statuses(self):
+        """Reset all phase indicators to waiting state"""
+        phases = ['fetch', 'clean', 'analyze']
+        for phase in phases:
+            self._update_phase_status(phase, "Waiting", 0)
+            icon_map = {
+                'fetch': self.fetch_icon,
+                'clean': self.clean_icon,
+                'analyze': self.analyze_icon
+            }
+            icon_map[phase].setText("⭕")
 
     def _start_fetch_only(self):
         if not self.search_manager.get_search_terms():
@@ -963,6 +1068,66 @@ class NewsScraperGUI(QMainWindow):
             
             if (search_text in title and relevance >= min_relevance):
                 self._add_result_item(result)
+
+    def _export_results(self):
+        """Export the current results to a file"""
+        if not self.all_results:
+            QMessageBox.warning(self, "Warning", "No results to export")
+            return
+
+        file_path, file_type = QFileDialog.getSaveFileName(
+            self,
+            "Export Results",
+            str(Path.home() / "Desktop"),
+            "CSV Files (*.csv);;JSON Files (*.json);;Text Files (*.txt);;All Files (*)"
+        )
+        
+        if not file_path:
+            return
+
+        try:
+            # Write results based on file type
+            if file_path.endswith('.csv'):
+                self._export_to_csv(file_path)
+            elif file_path.endswith('.json'):
+                self._export_to_json(file_path)
+            else:
+                self._export_to_txt(file_path)
+                
+            QMessageBox.information(self, "Success", f"Results exported to {file_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
+
+    def _export_to_csv(self, file_path):
+        """Export results to CSV format"""
+        import csv
+        
+        with open(file_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['title', 'relevance_score', 'url'])
+            writer.writeheader()
+            for result in self.all_results:
+                writer.writerow({
+                    'title': result.get('title', ''),
+                    'relevance_score': f"{result.get('relevance_score', 0):.2f}",
+                    'url': result.get('url', '')
+                })
+
+    def _export_to_json(self, file_path):
+        """Export results to JSON format"""
+        import json
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.all_results, f, indent=2, ensure_ascii=False)
+
+    def _export_to_txt(self, file_path):
+        """Export results to plain text format"""
+        with open(file_path, 'w', encoding='utf-8') as f:
+            for result in self.all_results:
+                f.write(f"Title: {result.get('title', '')}\n")
+                f.write(f"Relevance: {result.get('relevance_score', 0):.2f}\n")
+                f.write(f"URL: {result.get('url', '')}\n")
+                f.write("-" * 80 + "\n")
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():

@@ -219,6 +219,30 @@ class ArticleManager:
         params = (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
         self.db_manager.execute_query(query, params)
 
+    def update_article(self, article):
+        """Update an existing article in the raw_articles table."""
+        try:
+            query = """
+                UPDATE raw_articles 
+                SET title = ?, content = ?, description = ?, url = ?, url_to_image = ?
+                WHERE id = ?
+            """
+            self.db_manager.execute_query(
+                query,
+                (
+                    article.get('title'),
+                    article.get('content'),
+                    article.get('description'),
+                    article.get('url'),
+                    article.get('url_to_image'),
+                    article.get('id')
+                )
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error updating article: {e}")
+            return False
+
 class SearchTermManager:
     """Manages operations related to search terms, including insertion, retrieval, and batch loading."""
 
