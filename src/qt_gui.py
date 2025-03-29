@@ -17,6 +17,7 @@ from src.database_manager import DatabaseManager, ArticleManager, SearchTermMana
 from src.news_scraper import NewsArticleScraper
 from src.openai_relevance_processing import ArticleProcessor
 from src.article_validator import ArticleValidator
+from src.pipeline_manager import PipelineManager
 
 logger = setup_logging(__name__)
 
@@ -25,100 +26,32 @@ class ProcessingWorker(QThread):
     status_updated = pyqtSignal(str, bool, bool, bool)
     completed = pyqtSignal(list)
 
-    def __init__(self, scraper, processor, validator, search_terms, db_manager=None):
+    def __init__(self, pipeline: PipelineManager, search_terms: list):
         super().__init__()
-        self.scraper = scraper
-        self.processor = processor
-        self.validator = validator
+        self.pipeline = pipeline
         self.search_terms = search_terms
-        self.db_manager = db_manager
         self._is_running = True
+        
+        # Connect pipeline callbacks
+        self.pipeline.set_callbacks(
+            progress_callback=lambda current, total: self.progress_updated.emit(current, total),
+            status_callback=lambda msg, err, warn, succ: self.status_updated.emit(msg, err, warn, succ)
+        )
 
     def run(self):
-        asyncio.run(self._process_articles())
+        asyncio.run(self._process_pipeline())
+
+    async def _process_pipeline(self):
+        try:
+            results = await self.pipeline.execute_pipeline(self.search_terms)
+            self.completed.emit(results)
+            self.status_updated.emit("Processing completed successfully.", False, False, True)
+        except Exception as e:
+            logger.error(f"Worker error: {e}")
+            self.status_updated.emit(f"Error: {str(e)}", True, False, False)
 
     def stop(self):
         self._is_running = False
-
-    async def _process_articles(self):
-        try:
-            articles = []
-            if self.scraper:
-                # Try to fetch new articles
-                articles = await self.scraper.fetch_all_articles(self.search_terms)
-                if self.scraper.rate_limited:
-                    self.status_updated.emit("Rate limit reached. Using existing articles...", False, True, False)
-                
-                # Get existing articles from database if no new ones fetched
-                if not articles:
-                    articles = self.db_manager.execute_query("SELECT * FROM raw_articles")
-                    if articles:
-                        self.status_updated.emit(f"Processing {len(articles)} existing articles from database", False, False, True)
-
-            elif self.validator or self.processor:
-                articles = self.search_terms
-
-            # Get article counts for status messages
-            raw_count = len(self.db_manager.execute_query("SELECT id FROM raw_articles"))
-            clean_count = len(self.db_manager.execute_query("SELECT id FROM cleaned_articles"))
-            counts_msg = f"Database contains: {raw_count} raw articles, {clean_count} cleaned articles"
-
-            if not articles:
-                self.status_updated.emit(f"No articles to process. {counts_msg}", False, True, False)
-                return
-
-            # Process articles
-            total = len(articles)
-            processed = 0
-            cleaned_articles = []
-
-            for article in articles:
-                if not self._is_running:
-                    break
-
-                # Clean articles if validator is present
-                if self.validator:
-                    clean_article = self.validator.clean_article(article)
-                    if clean_article:
-                        cleaned_articles.append(clean_article)
-                        processed += 1
-                        self.progress_updated.emit(processed, total)
-                else:
-                    # If no validator, use articles as is
-                    cleaned_articles.append(article)
-                    processed += 1
-                    self.progress_updated.emit(processed, total)
-
-            if cleaned_articles and self._is_running:
-                # Process through OpenAI if processor is present
-                if self.processor:
-                    self.status_updated.emit("Starting OpenAI analysis...", False, False, False)
-                    processed = 0
-                    relevant_articles = []
-                    
-                    for article in cleaned_articles:
-                        if not self._is_running:
-                            break
-                            
-                        result = await self.processor.process_article(article, len(cleaned_articles) - processed)
-                        processed += 1
-                        self.progress_updated.emit(processed, len(cleaned_articles))
-                        
-                        if result:
-                            relevant_articles.append(result)
-                    
-                    self.completed.emit(relevant_articles)
-                    self.status_updated.emit(f"Analysis completed. Found {len(relevant_articles)} relevant articles. {counts_msg}", False, False, True)
-                else:
-                    # If no processor, return cleaned articles
-                    self.completed.emit(cleaned_articles)
-                    self.status_updated.emit(f"Processing completed. {counts_msg}", False, False, True)
-            else:
-                self.status_updated.emit(f"No valid articles to process. {counts_msg}", False, True, False)
-
-        except Exception as e:
-            logger.error(f"Processing error: {e}")
-            self.status_updated.emit(f"Error: {str(e)}", True, False, False)
 
 class NewsScraperGUI(QMainWindow):
     def __init__(self):
@@ -136,6 +69,7 @@ class NewsScraperGUI(QMainWindow):
         self.processing_queue = Queue()
         self._processing = False
         self.worker = None
+        self.pipeline = PipelineManager(self.db_manager, self.config_manager)
 
         # Setup UI
         self._setup_ui()
@@ -567,11 +501,11 @@ class NewsScraperGUI(QMainWindow):
         steps_layout = QHBoxLayout(steps_group)
 
         fetch_btn = QPushButton("1. Fetch Articles")
-        fetch_btn.clicked.connect(self._start_fetch_only)
+        fetch_btn.setEnabled(False)  # Removed functionality
         clean_btn = QPushButton("2. Clean Articles")
-        clean_btn.clicked.connect(self._start_cleaning_only)
+        clean_btn.setEnabled(False)  # Removed functionality
         analyze_btn = QPushButton("3. Analyze Relevance")
-        analyze_btn.clicked.connect(self._start_analysis_only)
+        analyze_btn.setEnabled(False)  # Removed functionality
 
         steps_layout.addWidget(fetch_btn)
         steps_layout.addWidget(clean_btn)
@@ -823,7 +757,8 @@ class NewsScraperGUI(QMainWindow):
 
     def _start_processing(self):
         """Start complete processing workflow"""
-        if not self.search_manager.get_search_terms():
+        search_terms = self.search_manager.get_search_terms()
+        if not search_terms:
             QMessageBox.warning(self, "Warning", "No search terms defined. Please add search terms first.")
             return
 
@@ -831,25 +766,28 @@ class NewsScraperGUI(QMainWindow):
         self.stop_btn.setEnabled(True)
         self._processing = True
 
-        scraper = NewsArticleScraper(self.config_manager)
-        scraper.db_manager = self.db_manager
+        # Reset UI elements
+        self._reset_phase_statuses()
+        self.progress_bar.setValue(0)
+        self.progress_counter.setText("0/0 articles processed")
+        self.status_icon.setText("🔄")
+        self.status_label.setText("Starting processing...")
+
+        # Initialize worker with pipeline
         self.worker = ProcessingWorker(
-            scraper=scraper,
-            processor=self.processor,
-            validator=self.validator,
-            search_terms=self.search_manager.get_search_terms(),
-            db_manager=self.db_manager
+            pipeline=self.pipeline,
+            search_terms=search_terms  # Pass full search term objects
         )
-        
-        # Connect all necessary signals
         self.worker.progress_updated.connect(self._update_progress)
         self.worker.status_updated.connect(self._update_status)
         self.worker.completed.connect(self._handle_processing_complete)
-        
+
+        logger.info("Starting full processing workflow")
         self.worker.start()
 
     def _handle_processing_complete(self, results):
         """Handle completion of processing with proper UI updates"""
+        logger.info(f"Processing completed with {len(results) if results else 0} results")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._processing = False
@@ -860,13 +798,15 @@ class NewsScraperGUI(QMainWindow):
             self._update_phase_status('clean', "Complete", 100, is_complete=True)
             self._update_phase_status('analyze', "Complete", 100, is_complete=True)
             
-            # Update results tab
+            # Update results tab and UI
             self._update_results(results)
             self._update_previews()
             QMessageBox.information(self, "Success", f"Processed {len(results)} articles successfully")
+            logger.info(f"Successfully processed {len(results)} articles")
         else:
             self._reset_phase_statuses()
             QMessageBox.warning(self, "Warning", "No articles were processed")
+            logger.warning("No articles were processed")
             self._update_previews()
 
     def _stop_processing(self):
@@ -887,26 +827,35 @@ class NewsScraperGUI(QMainWindow):
 
     def _update_status(self, message, is_error, is_warning, is_success):
         """Enhanced status updates with phase tracking"""
+        logger.info(f"Status update: {message}")
         self.status_label.setText(message)
         self.statusBar().showMessage(message)
         
         # Update phase statuses based on message content
-        if "fetching" in message.lower():
-            self._update_phase_status('fetch', "In Progress")
-        elif "cleaning" in message.lower():
+        message_lower = message.lower()
+        if "fetching" in message_lower or "fetch" in message_lower:
+            self._update_phase_status('fetch', "In Progress", 50)
+        elif "cleaning" in message_lower or "clean" in message_lower:
             self._update_phase_status('fetch', "Complete", 100, is_complete=True)
-            self._update_phase_status('clean', "In Progress")
-        elif "analyzing" in message.lower():
+            self._update_phase_status('clean', "In Progress", 50)
+        elif "analyzing" in message_lower or "analysis" in message_lower:
             self._update_phase_status('clean', "Complete", 100, is_complete=True)
-            self._update_phase_status('analyze', "In Progress")
+            self._update_phase_status('analyze', "In Progress", 50)
         
         if is_error:
+            logger.error(f"Process error: {message}")
             self.status_icon.setText("❌")
-            current_phase = 'fetch' if "fetching" in message.lower() else 'clean' if "cleaning" in message.lower() else 'analyze'
+            current_phase = 'fetch'
+            if "cleaning" in message_lower:
+                current_phase = 'clean'
+            elif "analyzing" in message_lower:
+                current_phase = 'analyze'
             self._update_phase_status(current_phase, "Error", is_error=True)
         elif is_warning:
+            logger.warning(f"Process warning: {message}")
             self.status_icon.setText("⚠️")
         elif is_success:
+            logger.info(f"Process success: {message}")
             self.status_icon.setText("✅")
         else:
             self.status_icon.setText("🔄")
@@ -956,75 +905,6 @@ class NewsScraperGUI(QMainWindow):
                 'analyze': self.analyze_icon
             }
             icon_map[phase].setText("⭕")
-
-    def _start_fetch_only(self):
-        if not self.search_manager.get_search_terms():
-            QMessageBox.warning(self, "Warning", "No search terms defined. Please add search terms first.")
-            return
-
-        self.start_btn.setEnabled(False)
-        scraper = NewsArticleScraper(self.config_manager)
-        self.worker = ProcessingWorker(scraper, None, None, self.search_manager.get_search_terms(), db_manager=self.db_manager)
-        
-        self.worker.progress_updated.connect(self._update_progress)
-        self.worker.status_updated.connect(self._update_status)
-        self.worker.completed.connect(lambda x: self._process_fetch_results(x))
-        
-        self.worker.start()
-
-    def _start_cleaning_only(self):
-        articles = self.article_manager.get_articles()
-        if not articles:
-            QMessageBox.warning(self, "Warning", "No articles found to clean")
-            return
-
-        self.start_btn.setEnabled(False)
-        self.worker = ProcessingWorker(None, None, self.validator, articles, db_manager=self.db_manager)
-        
-        self.worker.progress_updated.connect(self._update_progress)
-        self.worker.status_updated.connect(self._update_status)
-        self.worker.completed.connect(lambda x: self._process_clean_results(x))
-        
-        self.worker.start()
-
-    def _start_analysis_only(self):
-        articles = self.article_manager.get_articles()
-        if not articles:
-            QMessageBox.warning(self, "Warning", "No articles found to analyze")
-            return
-
-        self.start_btn.setEnabled(False)
-        self.worker = ProcessingWorker(None, self.processor, None, articles, db_manager=self.db_manager)
-        
-        self.worker.progress_updated.connect(self._update_progress)
-        self.worker.status_updated.connect(self._update_status)
-        self.worker.completed.connect(self._update_results)
-        
-        self.worker.start()
-
-    def _process_fetch_results(self, articles):
-        self.start_btn.setEnabled(True)
-        raw_count = len(self.db_manager.execute_query("SELECT id FROM raw_articles"))
-        clean_count = len(self.db_manager.execute_query("SELECT id FROM cleaned_articles"))
-        counts_msg = f"Database contains: {raw_count} raw articles, {clean_count} cleaned articles"
-        
-        if articles:
-            QMessageBox.information(self, "Success", f"Fetched {len(articles)} new articles\n{counts_msg}")
-            for article in articles:
-                self.article_manager.insert_article(article, article['search_term_id'])
-        else:
-            QMessageBox.warning(self, "Info", f"No new articles fetched\n{counts_msg}")
-        self._update_previews()
-
-    def _process_clean_results(self, articles):
-        self.start_btn.setEnabled(True)
-        if articles:
-            QMessageBox.information(self, "Success", f"Cleaned {len(articles)} articles successfully")
-            for article in articles:
-                self.article_manager.update_article(article)
-        else:
-            QMessageBox.warning(self, "Warning", "No articles were cleaned")
-        self._update_previews()
 
     def _show_context_menu(self, position):
         item = self.results_tree.itemAt(position)

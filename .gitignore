@@ -6,6 +6,9 @@ venv/
 batch_processing.log
 openAIFiles/batch_input.jsonl
 src/__pycache__
+src/data/news_scraper.log
 tests/__pycache__
 batch/*
 config.json
+logs/*
+data/*

@@ -32,7 +32,7 @@ class NewsArticleScraper:
         self.rate_limited = False  # Flag to track API rate limit status
         self.partial_results = []  # Track processed search terms for resume capability
         
-    async def fetch_articles(self, search_term: str) -> List[Dict]:
+    async def _fetch_for_term(self, search_term: str) -> List[Dict]:
         """
         Fetch articles for a single search term using NewsAPI.
         
@@ -72,6 +72,28 @@ class NewsArticleScraper:
             logger.error(f"Error fetching articles: {e}")
             return []
 
+    async def fetch_articles(self, search_terms: List[str]) -> List[dict]:
+        """Fetch articles for each search term"""
+        all_articles = []
+        self.rate_limited = False
+        
+        for term in search_terms:
+            if self.rate_limited:
+                break
+                
+            try:
+                articles = await self._fetch_for_term(term)
+                all_articles.extend(articles)
+            except Exception as e:
+                if 'Rate limit' in str(e):
+                    logger.warning("Rate limit reached. Skipping remaining terms.")
+                    self.rate_limited = True
+                else:
+                    logger.error(f"Error fetching articles: {e}")
+                    raise
+
+        return all_articles
+
     async def fetch_all_articles(self, search_terms: List[Dict]) -> List[Dict]:
         """
         Fetch articles for multiple search terms with rate limiting and error handling.
@@ -94,7 +116,7 @@ class NewsArticleScraper:
             await asyncio.sleep(1/self.config.get("NEWS_API_REQUESTS_PER_SECOND", 1))
             
             # Fetch articles for the current term
-            articles = await self.fetch_articles(term['term'])
+            articles = await self._fetch_for_term(term['term'])
             self.partial_results.append(term['term'])  # Track progress
             
             # Add search term ID to each article and add to results

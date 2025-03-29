@@ -97,91 +97,107 @@ class ArticleProcessor:
             }
         ]
 
-    async def process_article(self, article: Dict[str, Any], remaining_articles: int) -> Optional[Dict[str, Any]]:
-        """Process a single article using the OpenAI API and store relevant results in the database"""
-        if not article:
-            logger.error("Empty article provided")
-            return
-
-        self.rate_limiter.wait_if_needed()
-
+    async def process_article(self, article: Dict[str, Any], remaining: int) -> Optional[Dict[str, Any]]:
+        """Process a single article"""
         try:
-            async with self.semaphore:
-                # Process article through OpenAI API
-                """{
-                            "role": "system",
-                            "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof."
-                                    "Analyze articles and rate their relevance to these topics from 0-1 where "
-                                    "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
-                    }"""
-                context_data = self.get_context_data(article)
-                
-                response = self.client.beta.chat.completions.parse(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are an expert in the geopolitics, specifically in Saudi Arabia and Kuwait."
-                                    "Analyze articles and rate their relevance to anything that has the potential to change the balance of power in the middle east regarding Saudi Arabia and Kuwait or "
-                                    "Saudi Arabia and Kuwait's capabilities in the military or industrial sphere from 0-1 where"
-                                    "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
-                        },
-                        {
-                            "role": "user",
-                            "content": 
-                                    f"Raw Article ID: {article.get('id', '')}\n"
-                                    f"Title: {article.get('title', '')}\n"
-                                    f"Content: {article.get('content', '')}\n"
-                                    f"URL: {article.get('url', '')}"
-                        }
-                    ],
-                    max_tokens=250,
-                    temperature=0,
-                    response_format=RatedArticle
+            article_id = article.get('id')
+            logger.info(f"Processing article - ID: {article_id}, URL: {article.get('url', 'No URL')}, Score: {article.get('relevance_score', 0.0)}")
+            
+            # Get existing processing result if available
+            if article_id:
+                existing = self.db_manager.execute_query(
+                    "SELECT relevance_score FROM cleaned_articles WHERE raw_article_id = ?", 
+                    (article_id,)
                 )
+                if existing:
+                    logger.info(f"Using existing relevance score for article {article_id}")
+                    article['relevance_score'] = existing[0]['relevance_score']
+                    return article
+            
+            # Continue with regular processing
+            logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
+            self.rate_limiter.wait_if_needed()
 
-                if not response.choices or not response.choices[0].message:
-                    logger.error(f"No response received for article ID: {article.get('id', '')}")
-                    return
-
-                # Extract relevance score from response
-                parsed_response = response.choices[0].message.parsed
-                relevance_score = parsed_response.relevance_score
-                raw_article_id = article.get('id')
-                url = article.get('url')
-
-                logger.info(f"Processing article - ID: {raw_article_id}, URL: {url}, Score: {relevance_score}")
-                logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
-
-                # Process and store relevant articles
-                if relevance_score >= self.RELEVANCE_THRESHOLD:
-                    logger.info(f"Article with ID '{raw_article_id}' is relevant (score: {relevance_score})")
-                    self.total_relevant += 1
-                    self.relevant += 1  # Increment relevant count
-                    self.max_relevance_score = max(self.max_relevance_score, relevance_score)
-
-                    # Insert the article data into the cleaned_articles table
-                    self.article_manager.insert_cleaned_article(
-                        raw_article_id=raw_article_id,
-                        title=article.get('title'),
-                        content=article.get('content'),
-                        source=article.get('source'),
-                        url=url,
-                        url_to_image=article.get('url_to_image'),
-                        published_at=article.get('published_at'),
-                        relevance_score=relevance_score
+            try:
+                async with self.semaphore:
+                    # Process article through OpenAI API
+                    """{
+                                "role": "system",
+                                "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof."
+                                        "Analyze articles and rate their relevance to these topics from 0-1 where "
+                                        "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
+                        }"""
+                    context_data = self.get_context_data(article)
+                    
+                    response = self.client.beta.chat.completions.parse(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are an expert in the geopolitics, specifically in Saudi Arabia and Kuwait."
+                                        "Analyze articles and rate their relevance to anything that has the potential to change the balance of power in the middle east regarding Saudi Arabia and Kuwait or "
+                                        "Saudi Arabia and Kuwait's capabilities in the military or industrial sphere from 0-1 where"
+                                        "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
+                            },
+                            {
+                                "role": "user",
+                                "content": 
+                                        f"Raw Article ID: {article.get('id', '')}\n"
+                                        f"Title: {article.get('title', '')}\n"
+                                        f"Content: {article.get('content', '')}\n"
+                                        f"URL: {article.get('url', '')}"
+                            }
+                        ],
+                        max_tokens=250,
+                        temperature=0,
+                        response_format=RatedArticle
                     )
-                    logger.info(f"✅ Inserted relevant article '{article.get('title')}' with score {relevance_score}")
-                else:
-                    self.irrelevant += 1
-                    logger.info(f"❌ Article with ID '{raw_article_id}' is not relevant (score: {relevance_score})")
 
-                logger.info(f"Total relevant articles: {self.total_relevant}")
-                logger.info(f"Remaining articles to process: {remaining_articles}")
+                    if not response.choices or not response.choices[0].message:
+                        logger.error(f"No response received for article ID: {article.get('id', '')}")
+                        return
 
-        except RateLimitError as e:
-            logger.warning(f"Rate limit exceeded: {e}")
-            await asyncio.sleep(10)
+                    # Extract relevance score from response
+                    parsed_response = response.choices[0].message.parsed
+                    relevance_score = parsed_response.relevance_score
+                    raw_article_id = article.get('id')
+                    url = article.get('url')
+
+                    logger.info(f"Processing article - ID: {raw_article_id}, URL: {url}, Score: {relevance_score}")
+                    logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
+
+                    # Process and store relevant articles
+                    if relevance_score >= self.RELEVANCE_THRESHOLD:
+                        logger.info(f"Article with ID '{raw_article_id}' is relevant (score: {relevance_score})")
+                        self.total_relevant += 1
+                        self.relevant += 1  # Increment relevant count
+                        self.max_relevance_score = max(self.max_relevance_score, relevance_score)
+
+                        # Insert the article data into the cleaned_articles table
+                        self.article_manager.insert_cleaned_article(
+                            raw_article_id=raw_article_id,
+                            title=article.get('title'),
+                            content=article.get('content'),
+                            source=article.get('source'),
+                            url=url,
+                            url_to_image=article.get('url_to_image'),
+                            published_at=article.get('published_at'),
+                            relevance_score=relevance_score
+                        )
+                        logger.info(f"✅ Inserted relevant article '{article.get('title')}' with score {relevance_score}")
+                    else:
+                        self.irrelevant += 1
+                        logger.info(f"❌ Article with ID '{raw_article_id}' is not relevant (score: {relevance_score})")
+
+                    logger.info(f"Total relevant articles: {self.total_relevant}")
+                    logger.info(f"Remaining articles to process: {remaining}")
+
+            except RateLimitError as e:
+                logger.warning(f"Rate limit exceeded: {e}")
+                await asyncio.sleep(10)
+            except Exception as e:
+                logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
+
         except Exception as e:
             logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
 
