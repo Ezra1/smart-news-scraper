@@ -12,21 +12,33 @@ class PipelineManager:
     def __init__(self, db_manager: DatabaseManager, config_manager: ConfigManager):
         self.db_manager = db_manager
         self.config_manager = config_manager
+        self.context_message = config_manager.get("CHATGPT_CONTEXT_MESSAGE")
+        self.progress_callback = None
+        self.status_callback = None
         self.scraper = NewsArticleScraper(config_manager)
-        self.processor = ArticleProcessor(db_manager)
+        self.processor = None  # Initialize as None
         self.validator = ArticleValidator()
-        self._progress_callback = None
-        self._status_callback = None
 
     def set_callbacks(self, progress_callback: Callable[[int, int], None],
                      status_callback: Callable[[str, bool, bool, bool], None]):
         """Set callbacks for progress and status updates"""
-        self._progress_callback = progress_callback
-        self._status_callback = status_callback
+        self.progress_callback = progress_callback
+        self.status_callback = status_callback
+
+    def set_context_message(self, context_message: dict):
+        """Update the ChatGPT context message"""
+        self.context_message = context_message
 
     async def execute_pipeline(self, search_terms: List[dict]):
         """Handles the complete pipeline execution"""
         try:
+            # Initialize processor here when needed
+            if not self.processor:
+                self.processor = ArticleProcessor(
+                    db_manager=self.db_manager,
+                    context_message=self.context_message
+                )
+
             terms = [term['term'] for term in search_terms if isinstance(term, dict) and 'term' in term]
             logger.info(f"Processing search terms: {terms}")
             
@@ -48,47 +60,49 @@ class PipelineManager:
     async def fetch_articles(self, terms: List[str]) -> List[dict]:
         """Execute fetch phase"""
         try:
-            self._status_callback("Fetching articles...", False, False, False)
-            articles = await self.scraper.fetch_articles(terms)
+            self.status_callback("Fetching articles...", False, False, False)
+            
+            # Get search term IDs before fetching
+            search_term_map = {}
+            for term in terms:
+                result = self.db_manager.execute_query(
+                    "SELECT id FROM search_terms WHERE term = ?",
+                    (term,)
+                )
+                if result:
+                    search_term_map[term] = result[0]['id']
+            
+            # Pass search term IDs to scraper
+            articles = await self.scraper.fetch_articles(terms, search_term_map)
             
             # If rate limited or no articles, try getting from database
             if not articles or self.scraper.rate_limited:
-                self._status_callback("Rate limit reached. Using existing articles...", False, True, False)
-                articles = self.db_manager.execute_query("""
-                    SELECT 
-                        ra.id,
-                        ra.search_term_id,
-                        ra.title,
-                        ra.content,
-                        ra.source,
-                        ra.url,
-                        ra.url_to_image,
-                        ra.published_at,
-                        ra.scraped_at
-                    FROM raw_articles ra
-                """)
+                self.status_callback("Rate limit reached. Using existing articles...", False, True, False)
+                articles = self.db_manager.execute_query(
+                    "SELECT * FROM raw_articles WHERE search_term_id IN (SELECT id FROM search_terms WHERE term IN ({}))"
+                    .format(','.join('?' * len(terms))), 
+                    terms
+                )
                 logger.info(f"Retrieved {len(articles)} articles from database")
-            
-            # Ensure all articles have an ID
-            for article in articles:
-                if 'id' not in article:
-                    logger.warning(f"Article missing ID: {article.get('url', 'No URL')}")
-                else:
-                    logger.debug(f"Processing article with ID: {article['id']}")
+
+            # Update status with fetched count
+            self.status_callback(f"Fetched {len(articles)} articles", False, False, True)
             
             total = len(articles)
-            self._progress_callback(total, total)
-            self._status_callback(f"Found {total} articles to process", False, False, True)
+            self.progress_callback(total, total)
+            self.status_callback(f"Found {total} articles to process", False, False, True)
             
             return articles
+            
         except Exception as e:
-            self._status_callback(f"Fetch error: {str(e)}", True, False, False)
+            logger.error(f"Pipeline fetch error: {str(e)}")
+            self.status_callback(f"Fetch error: {str(e)}", True, False, False)
             raise
 
     async def clean_articles(self, articles: List[dict]) -> List[dict]:
         """Execute clean phase"""
         try:
-            self._status_callback("Cleaning articles...", False, False, False)
+            self.status_callback("Cleaning articles...", False, False, False)
             cleaned = []
             total = len(articles)
             
@@ -101,21 +115,21 @@ class PipelineManager:
                 if clean_article := self.validator.clean_article(article):
                     clean_article['id'] = article_id  # Preserve the ID
                     cleaned.append(clean_article)
-                self._progress_callback(i, total)
+                self.progress_callback(i, total)
             
-            self._status_callback(f"Cleaned {len(cleaned)} articles", False, False, True)
+            self.status_callback(f"Cleaned {len(cleaned)} articles", False, False, True)
             return cleaned
         except Exception as e:
-            self._status_callback(f"Clean error: {str(e)}", True, False, False)
+            self.status_callback(f"Clean error: {str(e)}", True, False, False)
             raise
 
     async def analyze_articles(self, articles: List[dict]) -> List[dict]:
         """Execute analyze phase"""
         try:
-            self._status_callback("Analyzing articles...", False, False, False)
+            self.status_callback("Analyzing articles...", False, False, False)
             results = await self.processor.process_articles(articles)
-            self._status_callback(f"Analyzed {len(results)} articles", False, False, True)
+            self.status_callback(f"Analyzed {len(results)} articles", False, False, True)
             return results
         except Exception as e:
-            self._status_callback(f"Analysis error: {str(e)}", True, False, False)
+            self.status_callback(f"Analysis error: {str(e)}", True, False, False)
             raise

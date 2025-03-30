@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QPushButton, QLabel, QVBoxLayout,
     QHBoxLayout, QTabWidget, QLineEdit, QFrame, QListWidget, QProgressBar,
     QScrollArea, QTreeWidget, QTreeWidgetItem, QMessageBox, QFileDialog,
-    QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout
+    QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QAction
@@ -59,17 +59,21 @@ class NewsScraperGUI(QMainWindow):
         self.setWindowTitle("Smart News Scraper")
         self.setMinimumSize(1200, 800)
 
-        # Initialize components
+        # Initialize base components
         self.validator = ArticleValidator()
         self.config_manager = ConfigManager()
         self.db_manager = DatabaseManager(self.config_manager.get("DATABASE_PATH"))
         self.search_manager = SearchTermManager(self.db_manager)
         self.article_manager = ArticleManager(self.db_manager)
-        self.processor = ArticleProcessor(self.db_manager)
         self.processing_queue = Queue()
         self._processing = False
         self.worker = None
+        
+        # Initialize pipeline without processor
         self.pipeline = PipelineManager(self.db_manager, self.config_manager)
+        
+        # Defer processor initialization until needed
+        self.processor = None
 
         # Setup UI
         self._setup_ui()
@@ -317,7 +321,6 @@ class NewsScraperGUI(QMainWindow):
         """)
 
     def _create_config_tab(self):
-        # Update spacing and layout
         config_widget = QWidget()
         layout = QVBoxLayout(config_widget)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -370,6 +373,21 @@ class NewsScraperGUI(QMainWindow):
         
         layout.addWidget(threshold_group)
 
+        # Add ChatGPT Context Message group
+        context_group = QGroupBox("ChatGPT Context Message")
+        context_layout = QVBoxLayout(context_group)
+        
+        context_label = QLabel("Define the context and instructions for ChatGPT's article analysis:")
+        context_layout.addWidget(context_label)
+        
+        self.context_message = QTextEdit()
+        self.context_message.setPlaceholderText("Enter the system message for ChatGPT...")
+        default_message = self.config_manager.get("CHATGPT_CONTEXT_MESSAGE", {}).get("content", "")
+        self.context_message.setText(default_message)
+        context_layout.addWidget(self.context_message)
+        
+        layout.addWidget(context_group)
+
         # Save Button
         save_btn = QPushButton("Save Configuration")
         save_btn.clicked.connect(self._save_config)
@@ -377,6 +395,26 @@ class NewsScraperGUI(QMainWindow):
 
         layout.addStretch()
         self.tabs.addTab(config_widget, "Configuration")
+
+    def _save_config(self):
+        try:
+            self.config_manager.set("NEWS_API_KEY", self.news_api_key.text())
+            self.config_manager.set("OPENAI_API_KEY", self.openai_api_key.text())
+            self.config_manager.set("RELEVANCE_THRESHOLD", self.threshold_slider.value() / 100)
+            self.config_manager.set("CHATGPT_CONTEXT_MESSAGE", {
+                "role": "system",
+                "content": self.context_message.toPlainText()
+            })
+
+            if self.config_manager.validate():
+                # Reinitialize processor with new config
+                self.processor = None  # Clear old processor
+                QMessageBox.information(self, "Success", "Configuration saved successfully!")
+                self.statusBar().showMessage("Configuration saved successfully")
+            else:
+                QMessageBox.warning(self, "Warning", "Configuration saved but validation failed. Check API keys.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save configuration: {e}")
 
     def _create_search_terms_tab(self):
         search_widget = QWidget()
@@ -538,6 +576,11 @@ class NewsScraperGUI(QMainWindow):
         raw_layout.addWidget(raw_scroll)
         
         raw_controls = QHBoxLayout()
+        # Add fetched this run counter
+        raw_controls.addWidget(QLabel("Fetched this run: "))
+        self.fetched_count_label = QLabel("0")
+        raw_controls.addWidget(self.fetched_count_label)
+        raw_controls.addSpacing(20)  # Add some spacing between counters
         raw_controls.addWidget(QLabel("Total Raw Articles: "))
         self.raw_count_label = QLabel("0")
         raw_controls.addWidget(self.raw_count_label)
@@ -701,20 +744,6 @@ class NewsScraperGUI(QMainWindow):
     def _update_threshold_label(self):
         self.threshold_label.setText(f"{self.threshold_slider.value() / 100:.2f}")
 
-    def _save_config(self):
-        try:
-            self.config_manager.set("NEWS_API_KEY", self.news_api_key.text())
-            self.config_manager.set("OPENAI_API_KEY", self.openai_api_key.text())
-            self.config_manager.set("RELEVANCE_THRESHOLD", self.threshold_slider.value() / 100)
-
-            if self.config_manager.validate():
-                QMessageBox.information(self, "Success", "Configuration saved successfully!")
-                self.statusBar().showMessage("Configuration saved successfully")
-            else:
-                QMessageBox.warning(self, "Warning", "Configuration saved but validation failed. Check API keys.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save configuration: {e}")
-
     def _refresh_search_terms(self):
         self.terms_list.clear()
         terms = self.search_manager.get_search_terms()
@@ -757,33 +786,49 @@ class NewsScraperGUI(QMainWindow):
 
     def _start_processing(self):
         """Start complete processing workflow"""
-        search_terms = self.search_manager.get_search_terms()
-        if not search_terms:
-            QMessageBox.warning(self, "Warning", "No search terms defined. Please add search terms first.")
+        try:
+            # Initialize processor here with current config
+            if not self.processor:
+                self.processor = ArticleProcessor(self.db_manager)
+            
+            # Reset fetched counter when starting new run
+            self._update_fetched_count(0)
+            search_terms = self.search_manager.get_search_terms()
+            if not search_terms:
+                QMessageBox.warning(self, "Warning", "No search terms defined. Please add search terms first.")
+                return
+
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            self._processing = True
+
+            # Reset UI elements
+            self._reset_phase_statuses()
+            self.progress_bar.setValue(0)
+            self.progress_counter.setText("0/0 articles processed")
+            self.status_icon.setText("🔄")
+            self.status_label.setText("Starting processing...")
+
+            # Initialize worker with pipeline
+            self.worker = ProcessingWorker(
+                pipeline=self.pipeline,
+                search_terms=search_terms  # Pass full search term objects
+            )
+            self.worker.progress_updated.connect(self._update_progress)
+            self.worker.status_updated.connect(self._update_status)
+            self.worker.completed.connect(self._handle_processing_complete)
+
+            logger.info("Starting full processing workflow")
+            self.worker.start()
+            
+        except ValueError as e:
+            QMessageBox.warning(self, "Configuration Error", 
+                              "Please configure your API keys in the Configuration tab first.")
+            self.tabs.setCurrentIndex(0)  # Switch to config tab
             return
-
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self._processing = True
-
-        # Reset UI elements
-        self._reset_phase_statuses()
-        self.progress_bar.setValue(0)
-        self.progress_counter.setText("0/0 articles processed")
-        self.status_icon.setText("🔄")
-        self.status_label.setText("Starting processing...")
-
-        # Initialize worker with pipeline
-        self.worker = ProcessingWorker(
-            pipeline=self.pipeline,
-            search_terms=search_terms  # Pass full search term objects
-        )
-        self.worker.progress_updated.connect(self._update_progress)
-        self.worker.status_updated.connect(self._update_status)
-        self.worker.completed.connect(self._handle_processing_complete)
-
-        logger.info("Starting full processing workflow")
-        self.worker.start()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to start processing: {e}")
+            return
 
     def _handle_processing_complete(self, results):
         """Handle completion of processing with proper UI updates"""
@@ -841,6 +886,19 @@ class NewsScraperGUI(QMainWindow):
         elif "analyzing" in message_lower or "analysis" in message_lower:
             self._update_phase_status('clean', "Complete", 100, is_complete=True)
             self._update_phase_status('analyze', "In Progress", 50)
+        
+        # Check for fetch updates
+        if "fetched" in message_lower:
+            try:
+                # Try to extract number of articles from message
+                import re
+                if numbers := re.findall(r'\d+', message):
+                    self._update_fetched_count(int(numbers[0]))
+            except Exception as e:
+                logger.error(f"Error updating fetch count: {e}")
+            
+            # Update total raw articles count
+            self._update_raw_count()
         
         if is_error:
             logger.error(f"Process error: {message}")
@@ -905,6 +963,15 @@ class NewsScraperGUI(QMainWindow):
                 'analyze': self.analyze_icon
             }
             icon_map[phase].setText("⭕")
+
+    def _update_raw_count(self):
+        """Update the raw articles count from database"""
+        raw_count = len(self.db_manager.execute_query("SELECT id FROM raw_articles"))
+        self.raw_count_label.setText(str(raw_count))
+
+    def _update_fetched_count(self, count: int):
+        """Update the fetched this run counter"""
+        self.fetched_count_label.setText(str(count))
 
     def _show_context_menu(self, position):
         item = self.results_tree.itemAt(position)

@@ -72,26 +72,49 @@ class NewsArticleScraper:
             logger.error(f"Error fetching articles: {e}")
             return []
 
-    async def fetch_articles(self, search_terms: List[str]) -> List[dict]:
-        """Fetch articles for each search term"""
+    async def fetch_articles(self, search_terms: List[str], search_term_map: Dict[str, int]) -> List[Dict]:
+        """Fetch articles for given search terms with proper database insertion"""
         all_articles = []
-        self.rate_limited = False
         
         for term in search_terms:
-            if self.rate_limited:
-                break
-                
             try:
-                articles = await self._fetch_for_term(term)
-                all_articles.extend(articles)
+                params = {
+                    'q': term,
+                    'apiKey': self.api_key,
+                    'language': 'en',
+                    'sortBy': 'publishedAt'
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(self.api_url, params=params) as response:
+                        if response.status == 429:  # Rate limit hit
+                            self.rate_limited = True
+                            logger.warning("Rate limit reached")
+                            break
+                            
+                        data = await response.json()
+                        if data.get('status') == 'ok':
+                            articles = data.get('articles', [])
+                            
+                            # Insert each article with its search term ID
+                            for article in articles:
+                                search_term_id = search_term_map.get(term)
+                                if search_term_id:
+                                    # Add search term ID to article data
+                                    article['search_term_id'] = search_term_id
+                                    inserted_id = self.article_manager.insert_article(article, search_term_id)
+                                    if inserted_id:
+                                        article['id'] = inserted_id
+                                        all_articles.append(article)
+                                        
+                            logger.info(f"Fetched {len(articles)} articles for term '{term}'")
+                        else:
+                            logger.error(f"API error: {data.get('message', 'Unknown error')}")
+                            
             except Exception as e:
-                if 'Rate limit' in str(e):
-                    logger.warning("Rate limit reached. Skipping remaining terms.")
-                    self.rate_limited = True
-                else:
-                    logger.error(f"Error fetching articles: {e}")
-                    raise
-
+                logger.error(f"Error fetching articles for term '{term}': {e}")
+                continue
+                
         return all_articles
 
     async def fetch_all_articles(self, search_terms: List[Dict]) -> List[Dict]:

@@ -147,45 +147,47 @@ class ArticleManager:
             return False
 
     def insert_article(self, article_data: dict, search_term_id: int) -> Optional[int]:
-        """Insert an article with proper transaction handling"""
-        if self.article_exists(article_data['url']):
-            logger.info(f"Skipping duplicate article: {article_data['url']}")
-            return None
-
-        if not all(key in article_data for key in ['title', 'content', 'url']):
-            logger.error(f"Missing required fields in article data: {article_data}")
-            return None
-
-        query = """
-            INSERT INTO raw_articles (
-                search_term_id, title, content, source, url, 
-                url_to_image, published_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """
-
-        # Handle the source field correctly - it might be nested in a 'source' object
-        source = article_data.get('source', {})
-        source_name = source.get('name') if isinstance(source, dict) else str(source)
-
-        params = (
-            search_term_id,
-            article_data['title'],
-            article_data['content'],
-            source_name,
-            article_data['url'],
-            article_data.get('urlToImage', ''),  # Ensure default empty string
-            article_data.get('publishedAt', '')  # Ensure default empty string
-        )
-
+        """Insert an article with improved error handling and logging"""
         try:
+            if self.article_exists(article_data['url']):
+                logger.info(f"Skipping duplicate article: {article_data['url']}")
+                return None
+
+            if not all(key in article_data for key in ['title', 'content', 'url']):
+                logger.error(f"Missing required fields in article data: {article_data}")
+                return None
+
+            query = """
+                INSERT INTO raw_articles (
+                    search_term_id, title, content, source, url, 
+                    url_to_image, published_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+
+            # Handle the source field correctly
+            source = article_data.get('source', {})
+            source_name = source.get('name') if isinstance(source, dict) else str(source)
+
+            params = (
+                search_term_id,
+                article_data['title'],
+                article_data.get('content') or article_data.get('description', ''),  # Fallback to description if content is empty
+                source_name,
+                article_data['url'],
+                article_data.get('urlToImage', ''),
+                article_data.get('publishedAt', '')
+            )
+
             with self.db_manager.get_connection() as conn:
                 cur = conn.cursor()
                 cur.execute(query, params)
+                article_id = cur.lastrowid
                 conn.commit()
-                return cur.lastrowid
-            logger.info(f"Inserted article '{article_data['title']}'")
-        except sqlite3.Error as e:
-            logger.error(f"Error inserting article '{article_data['title']}': {e}")
+                logger.info(f"Successfully inserted article '{article_data['title']}' with ID {article_id}")
+                return article_id
+
+        except Exception as e:
+            logger.error(f"Error inserting article '{article_data.get('title', 'Unknown')}': {e}")
             return None
 
     def get_articles(self, article_id: Optional[int] = None) -> Optional[Dict]:

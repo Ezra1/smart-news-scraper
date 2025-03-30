@@ -51,12 +51,13 @@ class RatedArticle(BaseModel):
     relevance_score: float
 
 class ArticleProcessor:
-    def __init__(self, db_manager: DatabaseManager = None):
+    def __init__(self, db_manager: DatabaseManager = None, context_message: dict = None):
         config_manager = ConfigManager()
         self.OPENAI_API_KEY = config_manager.get("OPENAI_API_KEY")
         
         if not self.OPENAI_API_KEY:
-            raise ValueError("Missing OpenAI API Key")
+            logger.error("Missing OpenAI API Key in configuration")
+            raise ValueError("OpenAI API Key is required. Please configure it in the Configuration tab.")
             
         self.client = OpenAI(api_key=self.OPENAI_API_KEY)
         requests_per_minute = config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
@@ -77,6 +78,9 @@ class ArticleProcessor:
         
         # Add batch size configuration
         self.batch_size = config_manager.get("BATCH_SIZE", 10)
+        
+        # Store context message
+        self.context_message = context_message or config_manager.get("CHATGPT_CONTEXT_MESSAGE")
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article."""
@@ -121,24 +125,10 @@ class ArticleProcessor:
             try:
                 async with self.semaphore:
                     # Process article through OpenAI API
-                    """{
-                                "role": "system",
-                                "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof."
-                                        "Analyze articles and rate their relevance to these topics from 0-1 where "
-                                        "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
-                        }"""
-                    context_data = self.get_context_data(article)
-                    
                     response = self.client.beta.chat.completions.parse(
                         model="gpt-4o-mini",
                         messages=[
-                            {
-                                "role": "system",
-                                "content": "You are an expert in the geopolitics, specifically in Saudi Arabia and Kuwait."
-                                        "Analyze articles and rate their relevance to anything that has the potential to change the balance of power in the middle east regarding Saudi Arabia and Kuwait or "
-                                        "Saudi Arabia and Kuwait's capabilities in the military or industrial sphere from 0-1 where"
-                                        "where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
-                            },
+                            self.context_message,
                             {
                                 "role": "user",
                                 "content": 
