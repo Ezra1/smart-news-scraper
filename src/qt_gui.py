@@ -214,10 +214,10 @@ class NewsScraperGUI(QMainWindow):
                 color: {colors['light']};
             }}
             
-            QPushButton {{
+            QPushButton {{  
                 background-color: {colors['primary']};
                 color: {colors['text']};
-                border: none;
+                border: none;           
                 border-radius: 4px;
                 padding: 8px 16px;
                 font-weight: 500;

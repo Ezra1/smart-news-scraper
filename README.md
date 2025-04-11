@@ -2,8 +2,6 @@
 
 A modern GUI application for scraping, analyzing, and managing news articles based on customizable search terms and AI-powered relevance filtering.
 
-![Smart News Scraper Screenshot](docs/images/app_screenshot.png)
-
 ## Features
 
 - 📰 **Article Scraping**: Automatically fetch news articles using the NewsAPI
@@ -13,64 +11,6 @@ A modern GUI application for scraping, analyzing, and managing news articles bas
 - 💾 **Persistent Storage**: SQLite database for storing articles and search terms
 - 📁 **Import/Export**: Support for importing/exporting search terms and results
 - 🎨 **Modern UI**: Clean, intuitive interface with dark theme support
-
-## Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/yourusername/smart-news-scraper.git
-   cd smart-news-scraper
-   ```
-
-2. **Create and activate a virtual environment**:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Set up API keys**:
-   Create a `.env` file in the project root:
-   ```env
-   NEWS_API_KEY=your_news_api_key
-   OPENAI_API_KEY=your_openai_api_key
-   ```
-
-## Usage
-
-1. **Launch the application**:
-   ```bash
-   python -m src.gui
-   ```
-
-2. **Configure the Application**:
-   - Go to the "Configuration" tab
-   - Enter your API keys
-   - Adjust the relevance threshold
-
-3. **Manage Search Terms**:
-   - Use the "Search Terms" tab
-   - Add/remove search terms
-   - Import terms from a file
-   - Export your term list
-
-4. **Process Articles**:
-   - Navigate to the "Processing" tab
-   - Choose between full processing or step-by-step:
-     - Fetch articles
-     - Clean article data
-     - Analyze relevance
-   - Monitor progress in real-time
-
-5. **View Results**:
-   - Check the "Results" tab
-   - Filter articles by relevance
-   - Search through results
-   - Export findings for further analysis
 
 ## Configuration Options
 
@@ -101,18 +41,6 @@ smart-news-scraper/
 ├── tests/                  # Unit tests
 └── docs/                   # Documentation
 ```
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
