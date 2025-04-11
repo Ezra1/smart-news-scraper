@@ -29,7 +29,7 @@ class ArticleDeduplicator:
         
         Args:
             articles (List[Dict]): List of article dictionaries
-            
+        
         Returns:
             List[int]: List of duplicate article IDs
         """

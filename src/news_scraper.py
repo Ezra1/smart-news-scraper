@@ -7,7 +7,6 @@ import sys
 from src.logger_config import setup_logging
 logger = setup_logging(__name__)
 
-# Add project root to Python path for imports
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
@@ -15,7 +14,7 @@ from src.config import ConfigManager
 
 class NewsArticleScraper:
     """
-    A class to handle asynchronous news article fetching with rate limiting and error handling.
+    A class to handle asynchronous news article fetching with error handling.
     Interfaces with NewsAPI to fetch articles based on search terms.
     """
     
@@ -134,9 +133,6 @@ class NewsArticleScraper:
                 logger.warning(f"Rate limit reached after processing {len(all_articles)} articles.")
                 logger.warning(f"Skipping remaining {len(search_terms) - len(self.partial_results)} terms.")
                 return all_articles
-            
-            # Implement rate limiting between requests
-            await asyncio.sleep(1/self.config.get("NEWS_API_REQUESTS_PER_SECOND", 1))
             
             # Fetch articles for the current term
             articles = await self._fetch_for_term(term['term'])

@@ -9,28 +9,80 @@ from src.logger_config import setup_logging
 logger = setup_logging(__name__)
 
 class PipelineManager:
+    """
+    Manages the complete pipeline for news article processing.
+
+    This class orchestrates the entire workflow of fetching, cleaning, and analyzing news articles.
+    It coordinates between different components including the news scraper, article validator,
+    and article processor while managing database operations and status updates.
+
+    Attributes:
+        db_manager (DatabaseManager): Handles database operations
+        config_manager (ConfigManager): Manages configuration settings
+        context_message (dict): ChatGPT context message for article processing
+        progress_callback (Callable): Callback for reporting progress updates
+        status_callback (Callable): Callback for reporting status messages
+        scraper (NewsArticleScraper): Handles article fetching
+        processor (ArticleProcessor): Processes articles for relevance
+        validator (ArticleValidator): Validates and cleans article data
+    """
     def __init__(self, db_manager: DatabaseManager, config_manager: ConfigManager):
+        """
+        Initialize the PipelineManager with database and configuration managers.
+
+        Args:
+            db_manager (DatabaseManager): Instance of database manager for data operations
+            config_manager (ConfigManager): Instance of config manager for settings
+        """
         self.db_manager = db_manager
         self.config_manager = config_manager
         self.context_message = config_manager.get("CHATGPT_CONTEXT_MESSAGE")
         self.progress_callback = None
         self.status_callback = None
         self.scraper = NewsArticleScraper(config_manager)
-        self.processor = None  # Initialize as None
+        self.processor = None
         self.validator = ArticleValidator()
 
     def set_callbacks(self, progress_callback: Callable[[int, int], None],
                      status_callback: Callable[[str, bool, bool, bool], None]):
-        """Set callbacks for progress and status updates"""
+        """
+        Set callback functions for progress and status updates.
+
+        Args:
+            progress_callback (Callable[[int, int], None]): Function to report current progress
+                First int is current count, second int is total count
+            status_callback (Callable[[str, bool, bool, bool], None]): Function to report status
+                Takes message string and three boolean flags for error, rate_limited, and done states
+        """
         self.progress_callback = progress_callback
         self.status_callback = status_callback
 
     def set_context_message(self, context_message: dict):
-        """Update the ChatGPT context message"""
+        """
+        Update the ChatGPT context message used for article processing.
+
+        Args:
+            context_message (dict): New context message configuration for ChatGPT
+        """
         self.context_message = context_message
 
     async def execute_pipeline(self, search_terms: List[dict]):
-        """Handles the complete pipeline execution"""
+        """
+        Execute the complete article processing pipeline.
+
+        Coordinates the fetch, clean, and analyze phases of article processing.
+        Handles error reporting and ensures proper initialization of components.
+
+        Args:
+            search_terms (List[dict]): List of dictionaries containing search terms
+                Each dict should have a 'term' key with the search string
+
+        Returns:
+            List[dict]: List of processed articles with relevance analysis
+            
+        Raises:
+            Exception: If any phase of the pipeline fails
+        """
         try:
             # Initialize processor here when needed
             if not self.processor:
@@ -58,7 +110,21 @@ class PipelineManager:
             raise
 
     async def fetch_articles(self, terms: List[str]) -> List[dict]:
-        """Execute fetch phase"""
+        """
+        Fetch articles from news sources based on search terms.
+
+        Attempts to fetch fresh articles first. If rate limited or no results,
+        falls back to retrieving existing articles from the database.
+
+        Args:
+            terms (List[str]): List of search terms to fetch articles for
+
+        Returns:
+            List[dict]: List of fetched articles with their metadata
+
+        Raises:
+            Exception: If article fetching fails
+        """
         try:
             self.status_callback("Fetching articles...", False, False, False)
             
@@ -100,7 +166,21 @@ class PipelineManager:
             raise
 
     async def clean_articles(self, articles: List[dict]) -> List[dict]:
-        """Execute clean phase"""
+        """
+        Clean and validate fetched articles.
+
+        Processes each article through the validator to ensure data quality
+        and consistency. Preserves article IDs during cleaning.
+
+        Args:
+            articles (List[dict]): Raw articles to clean
+
+        Returns:
+            List[dict]: List of cleaned and validated articles
+
+        Raises:
+            Exception: If article cleaning fails
+        """
         try:
             self.status_callback("Cleaning articles...", False, False, False)
             cleaned = []
@@ -124,7 +204,21 @@ class PipelineManager:
             raise
 
     async def analyze_articles(self, articles: List[dict]) -> List[dict]:
-        """Execute analyze phase"""
+        """
+        Analyze articles for relevance using the ArticleProcessor.
+
+        Processes cleaned articles through ChatGPT to determine relevance
+        and extract key information.
+
+        Args:
+            articles (List[dict]): Cleaned articles to analyze
+
+        Returns:
+            List[dict]: List of articles with relevance analysis results
+
+        Raises:
+            Exception: If article analysis fails
+        """
         try:
             self.status_callback("Analyzing articles...", False, False, False)
             results = await self.processor.process_articles(articles)
