@@ -18,8 +18,29 @@ from src.news_scraper import NewsArticleScraper
 from src.openai_relevance_processing import ArticleProcessor
 from src.article_validator import ArticleValidator
 from src.pipeline_manager import PipelineManager
+from src.api_validator import validate_news_api_key, validate_openai_api_key
 
 logger = setup_logging(__name__)
+
+class ApiValidationWorker(QThread):
+    finished = pyqtSignal(tuple)  # (news_valid, openai_valid, error_message)
+
+    def __init__(self, news_key: str, openai_key: str):
+        super().__init__()
+        self.news_key = news_key
+        self.openai_key = openai_key
+
+    def run(self):
+        try:
+            # Validate News API
+            news_valid = asyncio.run(validate_news_api_key(self.news_key))
+            
+            # Validate OpenAI API
+            openai_valid = validate_openai_api_key(self.openai_key)
+            
+            self.finished.emit((news_valid, openai_valid, None))
+        except Exception as e:
+            self.finished.emit((False, False, str(e)))
 
 class ProcessingWorker(QThread):
     progress_updated = pyqtSignal(int, int)
@@ -397,9 +418,53 @@ class NewsScraperGUI(QMainWindow):
         self.tabs.addTab(config_widget, "Configuration")
 
     def _save_config(self):
+        """Save and validate configuration including API keys."""
         try:
-            self.config_manager.set("NEWS_API_KEY", self.news_api_key.text())
-            self.config_manager.set("OPENAI_API_KEY", self.openai_api_key.text())
+            # Get values
+            news_key = self.news_api_key.text().strip()
+            openai_key = self.openai_api_key.text().strip()
+            
+            # Show validation progress
+            self.progress_dialog = QMessageBox(self)
+            self.progress_dialog.setWindowTitle("Validating Configuration")
+            self.progress_dialog.setText("Validating API keys...")
+            self.progress_dialog.setStandardButtons(QMessageBox.StandardButton.Cancel)
+            
+            # Create and start validation worker
+            self.validation_worker = ApiValidationWorker(news_key, openai_key)
+            self.validation_worker.finished.connect(self._handle_validation_result)
+            self.validation_worker.start()
+            
+            # Show dialog but don't block
+            self.progress_dialog.show()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to start validation: {e}")
+            logger.error(f"Validation start error: {e}")
+
+    def _handle_validation_result(self, result):
+        """Handle API validation results"""
+        news_valid, openai_valid, error = result
+        
+        # Close progress dialog
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+        
+        if error:
+            QMessageBox.critical(self, "Error", f"Validation error: {error}")
+            return
+            
+        if not news_valid:
+            QMessageBox.critical(self, "Error", "Invalid News API key")
+            return
+        if not openai_valid:
+            QMessageBox.critical(self, "Error", "Invalid OpenAI API key")
+            return
+
+        # Update config with validated values
+        try:
+            self.config_manager.set("NEWS_API_KEY", self.news_api_key.text().strip())
+            self.config_manager.set("OPENAI_API_KEY", self.openai_api_key.text().strip())
             self.config_manager.set("RELEVANCE_THRESHOLD", self.threshold_slider.value() / 100)
             self.config_manager.set("CHATGPT_CONTEXT_MESSAGE", {
                 "role": "system",
@@ -407,14 +472,14 @@ class NewsScraperGUI(QMainWindow):
             })
 
             if self.config_manager.validate():
-                # Reinitialize processor with new config
                 self.processor = None  # Clear old processor
-                QMessageBox.information(self, "Success", "Configuration saved successfully!")
+                QMessageBox.information(self, "Success", "Configuration saved and validated successfully!")
                 self.statusBar().showMessage("Configuration saved successfully")
             else:
-                QMessageBox.warning(self, "Warning", "Configuration saved but validation failed. Check API keys.")
+                QMessageBox.warning(self, "Warning", "Configuration saved but validation failed. Check settings.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save configuration: {e}")
+            logger.error(f"Config save error: {e}")
 
     def _create_search_terms_tab(self):
         search_widget = QWidget()
@@ -787,10 +852,13 @@ class NewsScraperGUI(QMainWindow):
     def _start_processing(self):
         """Start complete processing workflow"""
         try:
-            # Initialize processor here with current config
-            if not self.processor:
-                self.processor = ArticleProcessor(self.db_manager)
-            
+            # Validate configuration first
+            if not self.config_manager.validate():
+                QMessageBox.warning(self, "Configuration Error", 
+                                  "Please configure your API keys in the Configuration tab first.")
+                self.tabs.setCurrentIndex(0)  # Switch to config tab
+                return
+
             # Reset fetched counter when starting new run
             self._update_fetched_count(0)
             search_terms = self.search_manager.get_search_terms()
@@ -809,10 +877,13 @@ class NewsScraperGUI(QMainWindow):
             self.status_icon.setText("🔄")
             self.status_label.setText("Starting processing...")
 
+            # Ensure pipeline has current config
+            self.pipeline = PipelineManager(self.db_manager, self.config_manager)
+
             # Initialize worker with pipeline
             self.worker = ProcessingWorker(
                 pipeline=self.pipeline,
-                search_terms=search_terms  # Pass full search term objects
+                search_terms=search_terms
             )
             self.worker.progress_updated.connect(self._update_progress)
             self.worker.status_updated.connect(self._update_status)
@@ -821,13 +892,9 @@ class NewsScraperGUI(QMainWindow):
             logger.info("Starting full processing workflow")
             self.worker.start()
             
-        except ValueError as e:
-            QMessageBox.warning(self, "Configuration Error", 
-                              "Please configure your API keys in the Configuration tab first.")
-            self.tabs.setCurrentIndex(0)  # Switch to config tab
-            return
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start processing: {e}")
+            logger.error(f"Processing start error: {e}")
             return
 
     def _handle_processing_complete(self, results):
@@ -876,39 +943,46 @@ class NewsScraperGUI(QMainWindow):
         self.status_label.setText(message)
         self.statusBar().showMessage(message)
         
-        # Update phase statuses based on message content
         message_lower = message.lower()
-        if "fetching" in message_lower or "fetch" in message_lower:
-            self._update_phase_status('fetch', "In Progress", 50)
-        elif "cleaning" in message_lower or "clean" in message_lower:
-            self._update_phase_status('fetch', "Complete", 100, is_complete=True)
-            self._update_phase_status('clean', "In Progress", 50)
-        elif "analyzing" in message_lower or "analysis" in message_lower:
-            self._update_phase_status('clean', "Complete", 100, is_complete=True)
-            self._update_phase_status('analyze', "In Progress", 50)
         
-        # Check for fetch updates
-        if "fetched" in message_lower:
+        # Analysis phase progress tracking
+        if "analyzing articles" in message_lower:
+            self._update_phase_status('analyze', "In Progress", 0)
+            if "/" in message:  # Format: "Analyzed X/Y articles"
+                try:
+                    current, total = map(int, message.split()[-2].split("/"))
+                    progress = (current / total * 100) if total > 0 else 0
+                    self._update_phase_status('analyze', f"{current}/{total}", progress)
+                except Exception as e:
+                    logger.error(f"Error parsing analysis progress: {e}")
+        
+        # Check for term progress in message
+        if "Processing term" in message:
             try:
-                # Try to extract number of articles from message
-                import re
-                if numbers := re.findall(r'\d+', message):
-                    self._update_fetched_count(int(numbers[0]))
+                # Extract current/total from "Processing term X/Y:"
+                progress_part = message.split(":")[0]
+                current, total = map(int, progress_part.split()[-1].split("/"))
+                self._update_phase_status('fetch', f"{current}/{total}", (current / total) * 100)
             except Exception as e:
-                logger.error(f"Error updating fetch count: {e}")
-            
-            # Update total raw articles count
-            self._update_raw_count()
+                logger.error(f"Error parsing progress: {e}")
         
+        # Handle rate limit transition
+        if "Rate limit reached" in message:
+            self._update_phase_status('fetch', "Rate Limited", 100, is_complete=True)
+            
+        # Update phase statuses based on message content
+        if "completed fetch" in message_lower:
+            if "rate limit" not in message_lower:
+                self._update_phase_status('fetch', "Complete", 100, is_complete=True)
+        elif "cleaning" in message_lower:
+            self._update_phase_status('clean', "In Progress", 50)
+        elif "analyzing" in message_lower:
+            self._update_phase_status('analyze', "In Progress", 50)
+
+        # Handle error and warning states
         if is_error:
             logger.error(f"Process error: {message}")
             self.status_icon.setText("❌")
-            current_phase = 'fetch'
-            if "cleaning" in message_lower:
-                current_phase = 'clean'
-            elif "analyzing" in message_lower:
-                current_phase = 'analyze'
-            self._update_phase_status(current_phase, "Error", is_error=True)
         elif is_warning:
             logger.warning(f"Process warning: {message}")
             self.status_icon.setText("⚠️")
@@ -945,8 +1019,19 @@ class NewsScraperGUI(QMainWindow):
             else:
                 icon_map[phase].setText("🔄")
 
-            # Update status text
-            status_map[phase].setText(f"{phase.title()}: {status}")
+            # Update status text and progress
+            if phase == 'fetch' and not is_complete and not is_error:
+                # Only try to split if status contains the expected format
+                if '/' in status:
+                    try:
+                        current, total = status.split('/')
+                        status_map[phase].setText(f"Fetching: {current}/{total} terms processed")
+                    except ValueError:
+                        status_map[phase].setText(f"Fetching: {status}")
+                else:
+                    status_map[phase].setText(f"Fetching: {status}")
+            else:
+                status_map[phase].setText(f"{phase.title()}: {status}")
 
             # Update progress
             if progress >= 0:
@@ -975,7 +1060,7 @@ class NewsScraperGUI(QMainWindow):
 
     def _show_context_menu(self, position):
         item = self.results_tree.itemAt(position)
-        if item:
+        if (item):
             menu = QMenu()
             copy_action = QAction("Copy URL", self)
             copy_action.triggered.connect(lambda: self._copy_url(item))
@@ -1075,6 +1160,21 @@ class NewsScraperGUI(QMainWindow):
                 f.write(f"Relevance: {result.get('relevance_score', 0):.2f}\n")
                 f.write(f"URL: {result.get('url', '')}\n")
                 f.write("-" * 80 + "\n")
+
+    def _update_results(self, results):
+        """Update results tab with processed articles"""
+        self.all_results = results
+        self.results_tree.clear()
+        for result in results:
+            item = QTreeWidgetItem([
+                result.get('title', ''),
+                f"{result.get('relevance_score', 0):.2f}",
+                result.get('url', '')
+            ])
+            self.results_tree.addTopLevelItem(item)
+        self.statusBar().showMessage(f"Loaded {len(results)} results")
+        # Optionally switch to results tab if desired
+        # self.tabs.setCurrentIndex(self.tabs.indexOf(self.tabs.findChild(QWidget, "Results")))
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():

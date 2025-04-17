@@ -72,10 +72,18 @@ class DatabaseManager:
             try:
                 cur = conn.cursor()
                 cur.execute(query, params or ())
-                if query.strip().upper().startswith("SELECT"):
+                
+                # For INSERT queries, return the cursor to access lastrowid
+                if query.strip().upper().startswith("INSERT"):
+                    conn.commit()
+                    return cur
+                # For SELECT queries, return results as dictionaries
+                elif query.strip().upper().startswith("SELECT"):
                     return [dict(row) for row in cur.fetchall()]
-                conn.commit()
-                return None
+                # For other queries (UPDATE, DELETE), just commit
+                else:
+                    conn.commit()
+                    return None
             except sqlite3.Error as e:
                 conn.rollback()
                 logger.error(f"Database query error: {e} | Query: {query}")
@@ -244,6 +252,69 @@ class ArticleManager:
         except Exception as e:
             logger.error(f"Error updating article: {e}")
             return False
+
+    def insert_raw_article(self, **article_data) -> Optional[int]:
+        """Insert a raw article into the database."""
+        try:
+            # Extract data with defaults for optional fields
+            data = {
+                'title': article_data.get('title', ''),
+                'content': article_data.get('content', ''),
+                'source': article_data.get('source', ''),
+                'url': article_data.get('url', ''),
+                'url_to_image': article_data.get('url_to_image', ''),
+                'published_at': article_data.get('published_at', ''),
+                'search_term_id': article_data.get('search_term_id')
+            }
+            
+            # Check if article already exists by URL
+            existing = self.db_manager.execute_query(
+                "SELECT id FROM raw_articles WHERE url = ?",
+                (data['url'],)
+            )
+            
+            if existing:
+                logger.debug(f"Article already exists with URL: {data['url']}")
+                return existing[0]['id']
+            
+            # Insert new article
+            query = """
+                INSERT INTO raw_articles 
+                (title, content, source, url, url_to_image, published_at, search_term_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+            values = (
+                data['title'], data['content'], data['source'],
+                data['url'], data['url_to_image'], data['published_at'],
+                data['search_term_id']
+            )
+            
+            # Execute the insert and get the cursor back
+            result = self.db_manager.execute_query(query, values)
+            if result and hasattr(result, 'lastrowid'):
+                article_id = result.lastrowid
+                logger.debug(f"Inserted raw article with ID: {article_id}")
+                return article_id
+            else:
+                logger.error("Failed to get lastrowid from insert operation")
+                return None
+            
+        except Exception as e:
+            logger.error(f"Error inserting raw article: {e}")
+            return None
+
+    def get_unanalyzed_count(self) -> int:
+        """Get count of articles that haven't been analyzed for relevance yet."""
+        try:
+            query = """
+                SELECT COUNT(*) as count FROM raw_articles 
+                WHERE id NOT IN (SELECT raw_article_id FROM cleaned_articles)
+            """
+            result = self.db_manager.execute_query(query)
+            return result[0]['count'] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting unanalyzed count: {e}")
+            return 0
 
 class SearchTermManager:
     """Manages operations related to search terms, including insertion, retrieval, and batch loading."""

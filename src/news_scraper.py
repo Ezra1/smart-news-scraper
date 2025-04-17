@@ -1,9 +1,11 @@
 import aiohttp
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Optional
+from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 
+from src.database_manager import ArticleManager, DatabaseManager
 from src.logger_config import setup_logging
 logger = setup_logging(__name__)
 
@@ -31,90 +33,94 @@ class NewsArticleScraper:
         self.rate_limited = False  # Flag to track API rate limit status
         self.partial_results = []  # Track processed search terms for resume capability
         
-    async def _fetch_for_term(self, search_term: str) -> List[Dict]:
-        """
-        Fetch articles for a single search term using NewsAPI.
+        # Initialize database components
+        self.db_manager = DatabaseManager()
+        self.article_manager = ArticleManager(self.db_manager)
         
-        Args:
-            search_term: The term to search for in news articles
-            
-        Returns:
-            List[Dict]: List of article dictionaries from the API response
-        """
-        try:
-            # Create a new aiohttp session for the request
-            async with aiohttp.ClientSession() as session:
-                # Set up the API request parameters
-                params = {
-                    'q': search_term,
-                    'apiKey': self.api_key,
-                    'language': 'en',
-                    'sortBy': 'publishedAt'
-                }
-                
-                # Make the API request
-                async with session.get(self.api_url, params=params) as response:
-                    if response.status == 200:
-                        # Successful response
-                        data = await response.json()
-                        return data.get('articles', [])
-                    elif response.status == 429:
-                        # Rate limit exceeded
-                        self.rate_limited = True
-                        logger.warning("Rate limit reached. Skipping remaining terms.")
-                        return []
-                    else:
-                        # Other API errors
-                        logger.error(f"API request failed: {response.status}")
-                        return []
-        except Exception as e:
-            logger.error(f"Error fetching articles: {e}")
-            return []
-
-    async def fetch_articles(self, search_terms: List[str], search_term_map: Dict[str, int]) -> List[Dict]:
-        """Fetch articles for given search terms with proper database insertion"""
+        # Rate limiting settings
+        self.requests_per_second = config_manager.get("NEWS_API_REQUESTS_PER_SECOND", 1)
+        self._last_request_time = 0
+        
+    async def fetch_articles(self, search_terms: List[str], search_term_map: Dict[str, int]) -> List[dict]:
+        """Fetch articles for given search terms."""
         all_articles = []
+        self.rate_limited = False
         
         for term in search_terms:
             try:
+                await self._wait_for_rate_limit()
+                
+                # Handle multi-language search by removing language restriction
+                # and using both original and English variations
                 params = {
-                    'q': term,
-                    'apiKey': self.api_key,
-                    'language': 'en',
-                    'sortBy': 'publishedAt'
+                    "q": term,
+                    "apiKey": self.api_key,
+                    "sortBy": "relevancy",  # Changed from publishedAt to get most relevant results
+                    "pageSize": 100,
+                    "from": (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
+                    "to": datetime.now().strftime("%Y-%m-%d"),
+                    "searchIn": "title,description,content"  # Explicitly set search fields
                 }
                 
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(self.api_url, params=params) as response:
-                        if response.status == 429:  # Rate limit hit
-                            self.rate_limited = True
-                            logger.warning("Rate limit reached")
-                            break
-                            
-                        data = await response.json()
-                        if data.get('status') == 'ok':
-                            articles = data.get('articles', [])
-                            
-                            # Insert each article with its search term ID
-                            for article in articles:
-                                search_term_id = search_term_map.get(term)
-                                if search_term_id:
-                                    # Add search term ID to article data
-                                    article['search_term_id'] = search_term_id
-                                    inserted_id = self.article_manager.insert_article(article, search_term_id)
-                                    if inserted_id:
-                                        article['id'] = inserted_id
-                                        all_articles.append(article)
-                                        
-                            logger.info(f"Fetched {len(articles)} articles for term '{term}'")
-                        else:
-                            logger.error(f"API error: {data.get('message', 'Unknown error')}")
-                            
+                # Try without language restriction first
+                articles = await self._make_api_request(params)
+                if not articles:
+                    # If no results, try with English
+                    params["language"] = "en"
+                    articles = await self._make_api_request(params)
+                
+                # Process and store articles
+                for article in articles:
+                    article_data = {
+                        "title": article.get("title"),
+                        "content": article.get("content") or article.get("description", ""),
+                        "source": article.get("source", {}).get("name"),
+                        "url": article.get("url"),
+                        "url_to_image": article.get("urlToImage"),
+                        "published_at": article.get("publishedAt"),
+                        "search_term_id": search_term_map.get(term)
+                    }
+                    
+                    article_id = self.article_manager.insert_raw_article(**article_data)
+                    if article_id:
+                        article_data["id"] = article_id
+                        all_articles.append(article_data)
+                
+                logger.info(f"Fetched {len(articles)} articles for term '{term}'")
+                
             except Exception as e:
-                logger.error(f"Error fetching articles for term '{term}': {e}")
-                continue
+                logger.error(f"Error fetching articles for term '{term}': {str(e)}")
                 
         return all_articles
+
+    async def _make_api_request(self, params: dict) -> List[dict]:
+        """Make request to NewsAPI with error handling."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.api_url, params=params) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get("articles", [])
+                    elif response.status == 429:
+                        logger.warning("Rate limit exceeded")
+                        self.rate_limited = True
+                        return []
+                    else:
+                        response_text = await response.text()
+                        logger.error(f"API request failed with status {response.status}")
+                        logger.error(f"Response: {response_text}")
+                        return []
+        except Exception as e:
+            logger.error(f"API request error: {e}")
+            return []
+
+    async def _wait_for_rate_limit(self):
+        """Implement rate limiting."""
+        current_time = datetime.now().timestamp()
+        time_since_last = current_time - self._last_request_time
+        if time_since_last < (1.0 / self.requests_per_second):
+            await asyncio.sleep((1.0 / self.requests_per_second) - time_since_last)
+        self._last_request_time = datetime.now().timestamp()
 
     async def fetch_all_articles(self, search_terms: List[Dict]) -> List[Dict]:
         """

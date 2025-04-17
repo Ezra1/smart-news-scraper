@@ -51,16 +51,18 @@ class RatedArticle(BaseModel):
     relevance_score: float
 
 class ArticleProcessor:
-    def __init__(self, db_manager: DatabaseManager = None, context_message: dict = None):
-        config_manager = ConfigManager()
-        self.OPENAI_API_KEY = config_manager.get("OPENAI_API_KEY")
+    def __init__(self, db_manager: DatabaseManager = None, 
+                 context_message: dict = None,
+                 config_manager: ConfigManager = None):  # Add config_manager parameter
+        self.config_manager = config_manager or ConfigManager()
+        self.OPENAI_API_KEY = self.config_manager.get("OPENAI_API_KEY")
         
         if not self.OPENAI_API_KEY:
             logger.error("Missing OpenAI API Key in configuration")
             raise ValueError("OpenAI API Key is required. Please configure it in the Configuration tab.")
-            
+        
         self.client = OpenAI(api_key=self.OPENAI_API_KEY)
-        requests_per_minute = config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
+        requests_per_minute = self.config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
         self.rate_limiter = RateLimiter(requests_per_minute)
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
         
@@ -69,7 +71,7 @@ class ArticleProcessor:
         self.relevant = 0
         self.irrelevant = 0
         self.max_relevance_score = 0.0
-        self.RELEVANCE_THRESHOLD = config_manager.get("RELEVANCE_THRESHOLD")
+        self.RELEVANCE_THRESHOLD = self.config_manager.get("RELEVANCE_THRESHOLD")
         logger.info(f"Initialized ArticleProcessor with relevance threshold: {self.RELEVANCE_THRESHOLD}")
         
         # Use provided database manager or create new one
@@ -77,10 +79,10 @@ class ArticleProcessor:
         self.article_manager = ArticleManager(self.db_manager)
         
         # Add batch size configuration
-        self.batch_size = config_manager.get("BATCH_SIZE", 10)
+        self.batch_size = self.config_manager.get("BATCH_SIZE", 10)
         
         # Store context message
-        self.context_message = context_message or config_manager.get("CHATGPT_CONTEXT_MESSAGE")
+        self.context_message = context_message or self.config_manager.get("CHATGPT_CONTEXT_MESSAGE")
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article."""
@@ -105,7 +107,11 @@ class ArticleProcessor:
         """Process a single article"""
         try:
             article_id = article.get('id')
-            logger.info(f"Processing article - ID: {article_id}, URL: {article.get('url', 'No URL')}, Score: {article.get('relevance_score', 0.0)}")
+            source = article.get('source', 'Unknown Source')  # Add default source
+            if isinstance(source, dict):
+                source = source.get('name', 'Unknown Source')
+                
+            logger.info(f"Processing article - ID: {article_id}, URL: {article.get('url', 'No URL')}")
             
             # Get existing processing result if available
             if article_id:
@@ -166,12 +172,12 @@ class ArticleProcessor:
                         # Insert the article data into the cleaned_articles table
                         self.article_manager.insert_cleaned_article(
                             raw_article_id=raw_article_id,
-                            title=article.get('title'),
-                            content=article.get('content'),
-                            source=article.get('source'),
+                            title=article.get('title', ''),
+                            content=article.get('content', ''),
+                            source=source,  # Use processed source
                             url=url,
-                            url_to_image=article.get('url_to_image'),
-                            published_at=article.get('published_at'),
+                            url_to_image=article.get('url_to_image', ''),
+                            published_at=article.get('published_at', ''),
                             relevance_score=relevance_score
                         )
                         logger.info(f"✅ Inserted relevant article '{article.get('title')}' with score {relevance_score}")
@@ -193,19 +199,32 @@ class ArticleProcessor:
 
     async def process_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process articles in optimized batches"""
-        results = []
-        for i in range(0, len(articles), self.batch_size):
-            batch = articles[i:i + self.batch_size]
-            tasks = [
-                self.process_article(article, len(articles) - i - idx)
-                for idx, article in enumerate(batch)
-            ]
+        try:
+            # Get total unanalyzed articles for progress tracking
+            total_unanalyzed = self.article_manager.get_unanalyzed_count()
+            analyzed_so_far = 0
+            results = []
             
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-            results.extend([r for r in batch_results if not isinstance(r, Exception)])
+            for i in range(0, len(articles), self.batch_size):
+                batch = articles[i:i + self.batch_size]
+                tasks = [self.process_article(article, total_unanalyzed - analyzed_so_far) 
+                        for article in batch]
+                
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                valid_results = [r for r in batch_results if not isinstance(r, Exception)]
+                results.extend(valid_results)
+                
+                # Update progress after each batch
+                analyzed_so_far += len(batch)
+                if hasattr(self, 'progress_callback'):
+                    self.progress_callback(analyzed_so_far, total_unanalyzed)
             
-        return results
-    
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error processing articles: {e}")
+            return []
+
     def analyze_results(self):
         """Analyze the results after processing output."""
         total_articles = self.relevant + self.irrelevant

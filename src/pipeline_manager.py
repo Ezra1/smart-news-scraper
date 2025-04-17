@@ -84,12 +84,18 @@ class PipelineManager:
             Exception: If any phase of the pipeline fails
         """
         try:
-            # Initialize processor here when needed
+            # Validate config before proceeding
+            if not self.config_manager.validate():
+                raise ValueError("Configuration validation failed - check API keys")
+
+            # Initialize processor with current config
             if not self.processor:
                 self.processor = ArticleProcessor(
                     db_manager=self.db_manager,
-                    context_message=self.context_message
+                    context_message=self.context_message,
+                    config_manager=self.config_manager
                 )
+                logger.info("Created new ArticleProcessor with current config")
 
             terms = [term['term'] for term in search_terms if isinstance(term, dict) and 'term' in term]
             logger.info(f"Processing search terms: {terms}")
@@ -105,28 +111,19 @@ class PipelineManager:
             processed = await self.analyze_articles(cleaned)
             return processed
             
+        except ValueError as e:
+            logger.error(f"Pipeline configuration error: {e}")
+            raise
         except Exception as e:
             logger.error(f"Pipeline error: {str(e)}")
             raise
 
     async def fetch_articles(self, terms: List[str]) -> List[dict]:
-        """
-        Fetch articles from news sources based on search terms.
-
-        Attempts to fetch fresh articles first. If rate limited or no results,
-        falls back to retrieving existing articles from the database.
-
-        Args:
-            terms (List[str]): List of search terms to fetch articles for
-
-        Returns:
-            List[dict]: List of fetched articles with their metadata
-
-        Raises:
-            Exception: If article fetching fails
-        """
+        """Fetch articles from news sources based on search terms."""
         try:
-            self.status_callback("Fetching articles...", False, False, False)
+            self.status_callback("Starting article fetch...", False, False, False)
+            all_articles = []
+            total_terms = len(terms)
             
             # Get search term IDs before fetching
             search_term_map = {}
@@ -138,27 +135,32 @@ class PipelineManager:
                 if result:
                     search_term_map[term] = result[0]['id']
             
-            # Pass search term IDs to scraper
-            articles = await self.scraper.fetch_articles(terms, search_term_map)
-            
-            # If rate limited or no articles, try getting from database
-            if not articles or self.scraper.rate_limited:
-                self.status_callback("Rate limit reached. Using existing articles...", False, True, False)
-                articles = self.db_manager.execute_query(
-                    "SELECT * FROM raw_articles WHERE search_term_id IN (SELECT id FROM search_terms WHERE term IN ({}))"
-                    .format(','.join('?' * len(terms))), 
-                    terms
-                )
-                logger.info(f"Retrieved {len(articles)} articles from database")
+            # Process terms one by one with progress tracking
+            for current_term, term in enumerate(terms, 1):
+                self.status_callback(f"Processing term {current_term}/{total_terms}: {term}", False, False, False)
+                self.progress_callback(current_term, total_terms)
+                
+                # Pass single term to scraper
+                term_articles = await self.scraper.fetch_articles([term], {term: search_term_map.get(term)})
+                
+                # Check for rate limit after each term
+                if self.scraper.rate_limited:
+                    logger.warning(f"Rate limit reached after processing {current_term}/{total_terms} terms")
+                    self.status_callback("Rate limit reached. Moving to cleaning phase...", False, True, False)
+                    break
+                    
+                if term_articles:
+                    all_articles.extend(term_articles)
+                    logger.info(f"Found {len(term_articles)} articles for term '{term}'")
 
-            # Update status with fetched count
-            self.status_callback(f"Fetched {len(articles)} articles", False, False, True)
-            
-            total = len(articles)
-            self.progress_callback(total, total)
-            self.status_callback(f"Found {total} articles to process", False, False, True)
-            
-            return articles
+            # Final status update
+            articles_found = len(all_articles)
+            terms_processed = current_term
+            self.status_callback(
+                f"Completed fetch: {articles_found} articles from {terms_processed}/{total_terms} terms", 
+                False, False, True
+            )
+            return all_articles if articles_found > 0 else []
             
         except Exception as e:
             logger.error(f"Pipeline fetch error: {str(e)}")
