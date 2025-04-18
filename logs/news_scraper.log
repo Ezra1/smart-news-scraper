@@ -5054,3 +5054,10 @@
 2025-04-17 17:34:02,245 - src.qt_gui - INFO - Status update: Analyzed 456 articles
 2025-04-17 17:34:02,245 - src.qt_gui - INFO - Process success: Analyzed 456 articles
 2025-04-17 17:34:02,246 - src.qt_gui - INFO - Processing completed with 456 results
+2025-04-18 10:58:09,130 - src.api_validator - ERROR - News API validation failed with status 429
+2025-04-18 10:58:10,109 - src.api_validator - INFO - OpenAI API key validated successfully
+2025-04-18 10:58:19,969 - src.api_validator - ERROR - News API validation error: Cannot connect to host newsapi.org:443 ssl:default [Network is unreachable]
+2025-04-18 10:58:21,222 - src.api_validator - ERROR - OpenAI API validation error: Connection error.
+2025-04-18 10:58:44,435 - src.api_validator - ERROR - News API validation failed with status 429
+2025-04-18 10:58:45,065 - src.api_validator - INFO - OpenAI API key validated successfully
+2025-04-18 11:00:25,842 - src.config - ERROR - Missing required configuration keys: NEWS_API_KEY, OPENAI_API_KEY

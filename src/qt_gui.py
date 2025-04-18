@@ -604,11 +604,11 @@ class NewsScraperGUI(QMainWindow):
         steps_layout = QHBoxLayout(steps_group)
 
         fetch_btn = QPushButton("1. Fetch Articles")
-        fetch_btn.setEnabled(False)  # Removed functionality
+        fetch_btn.setEnabled(False)
         clean_btn = QPushButton("2. Clean Articles")
-        clean_btn.setEnabled(False)  # Removed functionality
+        clean_btn.setEnabled(False)
         analyze_btn = QPushButton("3. Analyze Relevance")
-        analyze_btn.setEnabled(False)  # Removed functionality
+        analyze_btn.setEnabled(False)
 
         steps_layout.addWidget(fetch_btn)
         steps_layout.addWidget(clean_btn)
