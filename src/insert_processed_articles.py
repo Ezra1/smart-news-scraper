@@ -15,11 +15,13 @@ logger = setup_logging(__name__)
 load_dotenv()
 OUTPUT_DIR = Path("output")
 
-class RelevanceFilter:
+from src.analysis_base import ArticleAnalysisMixin
+
+class RelevanceFilter(ArticleAnalysisMixin):
     """Handles extraction and processing of results to determine article relevance."""
 
     def __init__(self, article_manager: ArticleManager):
-        """Initialize with shared ArticleManager instance"""
+        super().__init__()  # Initialize analysis mixin
         config_manager = ConfigManager()
         self.article_manager = article_manager
         self.relevant = 0
@@ -73,8 +75,8 @@ class RelevanceFilter:
                 if article_data:
                     self.relevant += 1
                     self.max_relevance_score = max(self.max_relevance_score, relevance_score)
-                    # Insert the article data into the cleaned_articles table
-                    self.article_manager.insert_cleaned_article(
+                    # Insert the article data into the relevant_articles table
+                    self.article_manager.insert_relevant_article(
                         raw_article_id=article_data["id"],
                         title=article_data["title"],
                         content=article_data["content"],
@@ -95,62 +97,69 @@ class RelevanceFilter:
             logger.error(f"❌ Error processing result for article ID {raw_article_id}: {error}")
 
     def process_latest_results(self):
-        """Process the most recent results file."""
+        """
+        Process the most recent results file.
+        
+        This method attempts to read from JSONL files in the output directory.
+        If no files are found, it falls back to processing articles directly from the database.
+        """
         try:
+            # First try to process from files
             output_files = sorted(OUTPUT_DIR.glob("results_*.jsonl"), key=os.path.getmtime, reverse=True)
-            if not output_files:
-                logger.error("❌ No output files found in the output directory.")
-                return
+            if output_files:
+                latest_results_file = output_files[0]
+                logger.info(f"📂 Processing results from {latest_results_file}")
 
-            latest_results_file = output_files[0]
-            logger.info(f"📂 Processing results from {latest_results_file}")
-
-            with open(latest_results_file, "r", encoding="utf-8") as results_file:
-                for line in results_file:
-                    try:
-                        result = json.loads(line)
-                        self.process_result(result)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"❌ Invalid JSON in results file: {e}")
-
-            logger.info("✅ Results processing complete.")
+                with open(latest_results_file, "r", encoding="utf-8") as results_file:
+                    for line in results_file:
+                        try:
+                            result = json.loads(line)
+                            self.process_result(result)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"❌ Invalid JSON in results file: {e}")
+                
+                logger.info("✅ Results processing from file complete.")
+            else:
+                logger.info("No results files found. Processing directly from database...")
+                self.process_from_database()
         except Exception as error:
             logger.error(f"❌ Error processing results: {error}")
-
-    def analyze_results(self):
-        """Analyze the results after processing output."""
-        total_articles = self.relevant + self.irrelevant
-        if total_articles == 0:
-            logger.warning("⚠️ No articles processed.")
-            return
-
-        relevant_percentage = (self.relevant / total_articles) * 100
-        irrelevant_percentage = (self.irrelevant / total_articles) * 100
-        ratio = self.relevant / self.irrelevant if self.irrelevant > 0 else float('inf')
-
-        analysis_results = {
-            "Relevant articles": self.relevant,
-            "Irrelevant articles": self.irrelevant,
-            "Total articles": total_articles,
-            "Relevant percentage": f"{relevant_percentage:.2f}%",
-            "Irrelevant percentage": f"{irrelevant_percentage:.2f}%",
-            "Relevance ratio": f"{ratio:.2f}",
-            "Max relevance score": self.max_relevance_score
-        }
-
-        # Log and print results
-        for key, value in analysis_results.items():
-            logger.info(f"{key}: {value}")
-            print(f"{key}: {value}")
-
-        # Analysis conclusion
-        conclusion = (
-            "✅ Most articles are relevant, indicating well-targeted search."
-            if relevant_percentage > 50
-            else "⚠️ Most articles are irrelevant, suggesting search criteria refinement needed."
-        )
-        logger.info(conclusion)
-        print(conclusion)
+            
+    def process_from_database(self):
+        """
+        Process articles directly from the database.
+        
+        This method retrieves articles from the relevant_articles table
+        and processes them for relevance analysis.
+        """
+        try:
+            # Get all articles from the relevant_articles table
+            query = """
+                SELECT c.*, r.id as raw_article_id 
+                FROM relevant_articles c
+                JOIN raw_articles r ON c.raw_article_id = r.id
+            """
+            results = self.article_manager.db_manager.execute_query(query)
+            
+            if not results:
+                logger.info("No relevant articles found in the database.")
+                return
+                
+            logger.info(f"Processing {len(results)} articles from database...")
+            
+            # Process each article
+            for article in results:
+                # Create a result object similar to what would be in the JSONL file
+                result = {
+                    "raw_article_id": article["raw_article_id"],
+                    "url": article["url"],
+                    "relevance_score": article["relevance_score"]
+                }
+                self.process_result(result)
+                
+            logger.info("✅ Database processing complete.")
+        except Exception as error:
+            logger.error(f"❌ Error processing from database: {error}")
 
 if __name__ == "__main__":
     db_manager = DatabaseManager()
@@ -158,6 +167,13 @@ if __name__ == "__main__":
         article_manager = ArticleManager(db_manager)
         relevance_filter = RelevanceFilter(article_manager)
         relevance_filter.process_latest_results()
+        
+        # If no files found, process directly from database
+        if relevance_filter.relevant + relevance_filter.irrelevant == 0:
+            logger.info("No results files found. Processing directly from database...")
+            # Future implementation for direct database processing
+        
+        # Analyze the results
         relevance_filter.analyze_results()
     finally:
         db_manager.close()

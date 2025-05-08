@@ -11,6 +11,8 @@ from src.news_scraper import NewsArticleScraper
 from src.openai_relevance_processing import ArticleProcessor
 from src.extract_cleaned_articles import extract_cleaned_data
 from src.config import ConfigManager
+from src.insert_processed_articles import RelevanceFilter
+from src.analysis_utils import analyze_relevance_results, print_analysis_results
 
 # Remove the old logging configuration and continue with existing code
 def setup_directories():
@@ -72,9 +74,9 @@ async def main():
         if delete_old_raw:
             db.execute_query("DELETE FROM raw_articles;")
 
-        delete_old_clean = input("Delete old clean articles before starting? (Y/N): ").strip().lower() == "y"
-        if delete_old_clean:
-            db.execute_query("DELETE FROM cleaned_articles;")
+        delete_old_relevant = input("Delete old relevant articles before starting? (Y/N): ").strip().lower() == "y"
+        if delete_old_relevant:
+            db.execute_query("DELETE FROM relevant_articles;")
 
         print(f"Loading search terms from {search_terms_file}...")
         search_manager.insert_search_terms_from_txt(search_terms_file)
@@ -98,7 +100,8 @@ async def main():
             if articles:
                 # Insert each fetched article into the database
                 for article in articles:
-                    article_manager.insert_article(article, article['search_term_id'])
+                    # Article data is already properly structured from news_scraper
+                    article_manager.insert_article(article)
                 
                 # Print the number of articles being processed
                 print(f"Processing {len(articles)} articles...")
@@ -134,13 +137,13 @@ async def main():
             # Print a message indicating the completion of processing
             print("\nProcessing completed.")
 
-            # Define the output file path for cleaned and relevant data
+            # Define the output file path for relevant articles
             desktop_path = str(Path.home() / "Desktop")
-            output_file = str(Path(desktop_path) / "cleaned_articles.txt")
+            output_file = str(Path(desktop_path) / "relevant_articles.txt")
             
-            # Extract cleaned and relevant data from the database and save it to the output file
+            # Extract relevant articles from the database and save them to the output file
             extract_cleaned_data(db_path, output_file)
-            print(f"Cleaned and relevant data extracted to {output_file}")
+            print(f"Relevant articles extracted to {output_file}")
 
         except Exception as e:
             logger.error(f"Error during processing: {e}")

@@ -15,34 +15,8 @@ sys.path.append(project_root)
 
 from src.database_manager import ArticleManager, DatabaseManager
 from src.config import ConfigManager
-
-class RateLimiter:
-    def __init__(self, requests_per_minute: int):
-        self.requests_per_minute = requests_per_minute
-        self.request_times = []
-        self._last_request_time = 0
-
-    def wait_if_needed(self):
-        """Implement rate limiting based on requests per minute."""
-        current_time = time.time()
-        
-        # Clean up old request times
-        self.request_times = [t for t in self.request_times if current_time - t < 60]
-        
-        # Check if we need to wait
-        if len(self.request_times) >= self.requests_per_minute:
-            wait_time = 60 - (current_time - self.request_times[0])
-            if wait_time > 0:
-                time.sleep(wait_time)
-        
-        # Ensure minimum time between requests
-        time_since_last_request = current_time - self._last_request_time
-        if time_since_last_request < 1.0:
-            time.sleep(1.0 - time_since_last_request)
-        
-        # Update tracking
-        self._last_request_time = time.time()
-        self.request_times.append(self._last_request_time)
+from src.analysis_base import ArticleAnalysisMixin
+from src.utils.rate_limiter import RateLimiter
 
 class RatedArticle(BaseModel):
     """Structured output schema for processed articles."""
@@ -50,10 +24,11 @@ class RatedArticle(BaseModel):
     url: str
     relevance_score: float
 
-class ArticleProcessor:
+class ArticleProcessor(ArticleAnalysisMixin):
     def __init__(self, db_manager: DatabaseManager = None, 
                  context_message: dict = None,
-                 config_manager: ConfigManager = None):  # Add config_manager parameter
+                 config_manager: ConfigManager = None):
+        super().__init__()  # Initialize analysis mixin
         self.config_manager = config_manager or ConfigManager()
         self.OPENAI_API_KEY = self.config_manager.get("OPENAI_API_KEY")
         
@@ -63,7 +38,7 @@ class ArticleProcessor:
         
         self.client = OpenAI(api_key=self.OPENAI_API_KEY)
         requests_per_minute = self.config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
-        self.rate_limiter = RateLimiter(requests_per_minute)
+        self.rate_limiter = RateLimiter(requests_per_minute=requests_per_minute)
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
         
         # Initialize tracking variables
@@ -85,9 +60,19 @@ class ArticleProcessor:
         self.context_message = context_message or self.config_manager.get("CHATGPT_CONTEXT_MESSAGE")
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Retrieve relevant context data for the article."""
-        # This would be your RAG implementation
-        # For example, getting similar articles or relevant domain knowledge
+        """Retrieve relevant context data for the article.
+        
+        This is a placeholder for a future RAG (Retrieval-Augmented Generation) implementation.
+        Currently returns basic article information formatted for the OpenAI API.
+        
+        Args:
+            article: Dictionary containing article data
+            
+        Returns:
+            List of context data dictionaries formatted for OpenAI API
+        """
+        # Basic implementation - in a real RAG system, this would retrieve similar articles
+        # or domain-specific knowledge to enhance the context
         return [
             {
                 "type": "text",
@@ -130,6 +115,9 @@ class ArticleProcessor:
 
             try:
                 async with self.semaphore:
+                    # Get context data for RAG (if implemented)
+                    context_data = self.get_context_data(article)
+                    
                     # Process article through OpenAI API
                     response = self.client.beta.chat.completions.parse(
                         model="gpt-4o-mini",
@@ -169,8 +157,8 @@ class ArticleProcessor:
                         self.relevant += 1  # Increment relevant count
                         self.max_relevance_score = max(self.max_relevance_score, relevance_score)
 
-                        # Insert the article data into the cleaned_articles table
-                        self.article_manager.insert_cleaned_article(
+                        # Insert the article data into the relevant_articles table
+                        self.article_manager.insert_relevant_article(
                             raw_article_id=raw_article_id,
                             title=article.get('title', ''),
                             content=article.get('content', ''),
@@ -225,41 +213,6 @@ class ArticleProcessor:
             logger.error(f"Error processing articles: {e}")
             return []
 
-    def analyze_results(self):
-        """Analyze the results after processing output."""
-        total_articles = self.relevant + self.irrelevant
-        if total_articles == 0:
-            logger.warning("⚠️ No articles processed.")
-            return
-
-        relevant_percentage = (self.relevant / total_articles) * 100
-        irrelevant_percentage = (self.irrelevant / total_articles) * 100
-        ratio = self.relevant / self.irrelevant if self.irrelevant > 0 else float('inf')
-
-        analysis_results = {
-            "Relevant articles": self.relevant,
-            "Irrelevant articles": self.irrelevant,
-            "Total articles": total_articles,
-            "Relevant percentage": f"{relevant_percentage:.2f}%",
-            "Irrelevant percentage": f"{irrelevant_percentage:.2f}%",
-            "Relevance ratio": f"{ratio:.2f}",
-            "Max relevance score": self.max_relevance_score
-        }
-
-        # Log and print results
-        for key, value in analysis_results.items():
-            logger.info(f"{key}: {value}")
-            print(f"{key}: {value}")
-
-        # Analysis conclusion
-        conclusion = (
-            "✅ Most articles are relevant, indicating well-targeted search."
-            if relevant_percentage > 50
-            else "⚠️ Most articles are irrelevant, suggesting search criteria refinement needed."
-        )
-        logger.info(conclusion)
-        print(conclusion)
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)  # Fix logging setup
     try:
@@ -272,7 +225,15 @@ if __name__ == "__main__":
         results = asyncio.run(processor.process_articles(articles))
 
         if results:
+            from src.analysis_utils import analyze_relevance_results, print_analysis_results
+            
+            analysis_results = analyze_relevance_results(
+                processor.relevant, 
+                processor.irrelevant, 
+                processor.max_relevance_score
+            )
             logger.info(f"Processing completed. Processed {len(results)} articles.")
+            print_analysis_results(analysis_results)
         else:
             logger.error("Processing failed")
     except Exception as e:

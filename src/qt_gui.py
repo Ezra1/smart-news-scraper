@@ -463,13 +463,19 @@ class NewsScraperGUI(QMainWindow):
 
         # Update config with validated values
         try:
-            self.config_manager.set("NEWS_API_KEY", self.news_api_key.text().strip())
-            self.config_manager.set("OPENAI_API_KEY", self.openai_api_key.text().strip())
-            self.config_manager.set("RELEVANCE_THRESHOLD", self.threshold_slider.value() / 100)
-            self.config_manager.set("CHATGPT_CONTEXT_MESSAGE", {
-                "role": "system",
-                "content": self.context_message.toPlainText()
-            })
+            # Save all config values including API keys
+            config_updates = {
+                "NEWS_API_KEY": self.news_api_key.text().strip(),
+                "OPENAI_API_KEY": self.openai_api_key.text().strip(),
+                "RELEVANCE_THRESHOLD": self.threshold_slider.value() / 100,
+                "CHATGPT_CONTEXT_MESSAGE": {
+                    "role": "system",
+                    "content": self.context_message.toPlainText()
+                }
+            }
+
+            # Save all at once to trigger encrypted storage
+            self.config_manager.save_config(config_updates)
 
             if self.config_manager.validate():
                 self.processor = None  # Clear old processor
@@ -657,8 +663,8 @@ class NewsScraperGUI(QMainWindow):
         
         right_panel.addWidget(raw_group)
 
-        # Cleaned Articles Preview
-        cleaned_group = QGroupBox("Cleaned Articles Preview")
+        # Relevant Articles Preview
+        cleaned_group = QGroupBox("Relevant Articles Preview")
         cleaned_layout = QVBoxLayout(cleaned_group)
         
         # Create scroll area for cleaned preview
@@ -679,11 +685,11 @@ class NewsScraperGUI(QMainWindow):
         cleaned_layout.addWidget(cleaned_scroll)
         
         cleaned_controls = QHBoxLayout()
-        cleaned_controls.addWidget(QLabel("Total Cleaned Articles: "))
+        cleaned_controls.addWidget(QLabel("Total Relevant Articles: "))
         self.cleaned_count_label = QLabel("0")
         cleaned_controls.addWidget(self.cleaned_count_label)
         cleaned_controls.addStretch()
-        clear_cleaned_btn = QPushButton("Clear Cleaned Articles")
+        clear_cleaned_btn = QPushButton("Clear Relevant Articles")
         clear_cleaned_btn.clicked.connect(self._clear_cleaned_articles)
         cleaned_controls.addWidget(clear_cleaned_btn)
         cleaned_layout.addLayout(cleaned_controls)
@@ -717,15 +723,15 @@ class NewsScraperGUI(QMainWindow):
             item = QTreeWidgetItem([str(article['id']), article['title'], article['url']])
             self.raw_preview.addTopLevelItem(item)
 
-        # Update cleaned articles preview
+        # Update relevant articles preview
         self.cleaned_preview.clear()
-        cleaned_articles = self.db_manager.execute_query(
-            "SELECT id, title, relevance_score FROM cleaned_articles ORDER BY id DESC LIMIT 100"
+        relevant_articles = self.db_manager.execute_query(
+            "SELECT id, title, relevance_score FROM relevant_articles ORDER BY id DESC LIMIT 100"
         )
-        cleaned_count = len(self.db_manager.execute_query("SELECT id FROM cleaned_articles"))
-        self.cleaned_count_label.setText(str(cleaned_count))
+        relevant_count = len(self.db_manager.execute_query("SELECT id FROM relevant_articles"))
+        self.cleaned_count_label.setText(str(relevant_count))
         
-        for article in cleaned_articles:
+        for article in relevant_articles:
             score = f"{article.get('relevance_score', 0):.2f}"  # Fixed double colon typo
             item = QTreeWidgetItem([str(article['id']), article['title'], score])
             self.cleaned_preview.addTopLevelItem(item)
@@ -747,14 +753,14 @@ class NewsScraperGUI(QMainWindow):
         reply = QMessageBox.question(
             self, 
             'Confirm Clear',
-            'Are you sure you want to clear all cleaned articles?',
+            'Are you sure you want to clear all relevant articles?',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.db_manager.execute_query("DELETE FROM cleaned_articles")
+            self.db_manager.execute_query("DELETE FROM relevant_articles")
             self._update_previews()
-            QMessageBox.information(self, "Success", "Cleaned articles cleared successfully")
+            QMessageBox.information(self, "Success", "Relevant articles cleared successfully")
 
     def _create_results_tab(self):
         results_widget = QWidget()
@@ -945,39 +951,55 @@ class NewsScraperGUI(QMainWindow):
         
         message_lower = message.lower()
         
-        # Analysis phase progress tracking
+        # Update fetched count from status messages
+        if "articles found)" in message:
+            try:
+                # Extract count from message like: "Processing term X/Y: term (Z articles found)"
+                count = int(message.split("(")[1].split(" ")[0])
+                self._update_fetched_count(count)
+            except Exception as e:
+                logger.error(f"Error updating fetched count: {e}")
+        
+        # Rest of existing status update code
         if "analyzing articles" in message_lower:
             self._update_phase_status('analyze', "In Progress", 0)
             if "/" in message:  # Format: "Analyzed X/Y articles"
                 try:
                     current, total = map(int, message.split()[-2].split("/"))
                     progress = (current / total * 100) if total > 0 else 0
-                    self._update_phase_status('analyze', f"{current}/{total}", progress)
+                    self._update_phase_status('analyze', f"Analyzing: {current}/{total}", progress)
                 except Exception as e:
                     logger.error(f"Error parsing analysis progress: {e}")
         
-        # Check for term progress in message
-        if "Processing term" in message:
+        elif "cleaning articles" in message_lower:
+            if "/" in message:  # Format: "Cleaned X/Y articles"
+                try:
+                    current, total = map(int, message.split()[-2].split("/"))
+                    progress = (current / total * 100) if total > 0 else 0
+                    self._update_phase_status('clean', f"Cleaning: {current}/{total}", progress)
+                except Exception as e:
+                    logger.error(f"Error parsing cleaning progress: {e}")
+            else:
+                self._update_phase_status('clean', "Cleaning", 0)
+        
+        elif "Processing term" in message:
             try:
-                # Extract current/total from "Processing term X/Y:"
+                # Extract term progress
                 progress_part = message.split(":")[0]
                 current, total = map(int, progress_part.split()[-1].split("/"))
-                self._update_phase_status('fetch', f"{current}/{total}", (current / total) * 100)
+                self._update_phase_status('fetch', f"Fetching: {current}/{total}", (current / total) * 100)
             except Exception as e:
-                logger.error(f"Error parsing progress: {e}")
-        
-        # Handle rate limit transition
-        if "Rate limit reached" in message:
+                logger.error(f"Error parsing fetch progress: {e}")
+
+        # Phase completion handling
+        if "completed fetch" in message_lower and "rate limit" not in message_lower:
+            self._update_phase_status('fetch', "Complete", 100, is_complete=True)
+        elif "completed cleaning" in message_lower:
+            self._update_phase_status('clean', "Complete", 100, is_complete=True)
+        elif "completed analysis" in message_lower:
+            self._update_phase_status('analyze', "Complete", 100, is_complete=True)
+        elif "Rate limit reached" in message:
             self._update_phase_status('fetch', "Rate Limited", 100, is_complete=True)
-            
-        # Update phase statuses based on message content
-        if "completed fetch" in message_lower:
-            if "rate limit" not in message_lower:
-                self._update_phase_status('fetch', "Complete", 100, is_complete=True)
-        elif "cleaning" in message_lower:
-            self._update_phase_status('clean', "In Progress", 50)
-        elif "analyzing" in message_lower:
-            self._update_phase_status('analyze', "In Progress", 50)
 
         # Handle error and warning states
         if is_error:
@@ -1163,18 +1185,29 @@ class NewsScraperGUI(QMainWindow):
 
     def _update_results(self, results):
         """Update results tab with processed articles"""
-        self.all_results = results
+        # Filter out None or invalid results
+        valid_results = [r for r in results if r is not None and isinstance(r, dict)]
+        self.all_results = valid_results
+        
+        if not valid_results:
+            logger.warning("No valid results to display")
+            self.statusBar().showMessage("No valid results found")
+            return
+
         self.results_tree.clear()
-        for result in results:
-            item = QTreeWidgetItem([
-                result.get('title', ''),
-                f"{result.get('relevance_score', 0):.2f}",
-                result.get('url', '')
-            ])
-            self.results_tree.addTopLevelItem(item)
-        self.statusBar().showMessage(f"Loaded {len(results)} results")
-        # Optionally switch to results tab if desired
-        # self.tabs.setCurrentIndex(self.tabs.indexOf(self.tabs.findChild(QWidget, "Results")))
+        for result in valid_results:
+            try:
+                item = QTreeWidgetItem([
+                    result.get('title', 'No title'),
+                    f"{result.get('relevance_score', 0):.2f}",
+                    result.get('url', 'No URL')
+                ])
+                self.results_tree.addTopLevelItem(item)
+            except Exception as e:
+                logger.error(f"Error adding result to tree: {e}")
+                continue
+
+        self.statusBar().showMessage(f"Loaded {len(valid_results)} results")
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():

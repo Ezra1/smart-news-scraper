@@ -124,6 +124,7 @@ class PipelineManager:
             self.status_callback("Starting article fetch...", False, False, False)
             all_articles = []
             total_terms = len(terms)
+            articles_fetched = 0  # Add counter
             
             # Get search term IDs before fetching
             search_term_map = {}
@@ -137,7 +138,7 @@ class PipelineManager:
             
             # Process terms one by one with progress tracking
             for current_term, term in enumerate(terms, 1):
-                self.status_callback(f"Processing term {current_term}/{total_terms}: {term}", False, False, False)
+                self.status_callback(f"Processing term {current_term}/{total_terms}: {term} ({articles_fetched} articles found)", False, False, False)
                 self.progress_callback(current_term, total_terms)
                 
                 # Pass single term to scraper
@@ -146,12 +147,13 @@ class PipelineManager:
                 # Check for rate limit after each term
                 if self.scraper.rate_limited:
                     logger.warning(f"Rate limit reached after processing {current_term}/{total_terms} terms")
-                    self.status_callback("Rate limit reached. Moving to cleaning phase...", False, True, False)
+                    self.status_callback(f"Rate limit reached after finding {articles_fetched} articles. Moving to cleaning phase...", False, True, False)
                     break
                     
                 if term_articles:
+                    articles_fetched += len(term_articles)  # Update counter
                     all_articles.extend(term_articles)
-                    logger.info(f"Found {len(term_articles)} articles for term '{term}'")
+                    logger.info(f"Found {len(term_articles)} articles for term '{term}' (Total: {articles_fetched})")
 
             # Final status update
             articles_found = len(all_articles)

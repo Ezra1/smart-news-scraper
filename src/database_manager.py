@@ -52,19 +52,53 @@ class DatabaseManager:
         connection = self._connection_pool.get()
         try:
             yield connection
-            self._connection_pool.put(connection)
         except Exception as e:
-            self._connection_pool.put(connection)
+            logger.error(f"Database connection error: {e}")
+            # If there's an error, don't reuse the connection
+            try:
+                connection.close()
+            except Exception:
+                pass
+            # Create a new connection to replace the closed one
+            new_conn = sqlite3.connect(
+                self.db_path,
+                timeout=60.0,
+                isolation_level='IMMEDIATE',
+                check_same_thread=False
+            )
+            new_conn.row_factory = sqlite3.Row
+            self._connection_pool.put(new_conn)
             raise
+        else:
+            # Only put the connection back if no exception occurred
+            self._connection_pool.put(connection)
 
     def close(self):
-        """Explicitly close the database connection"""
+        """Explicitly close all database connections in the pool"""
         try:
+            # Create a list to track connections we've tried to close
+            closed_connections = []
+            
+            # Try to get and close all connections in the pool
             while not self._connection_pool.empty():
-                conn = self._connection_pool.get()
-                conn.close()
+                try:
+                    conn = self._connection_pool.get(block=False)
+                    closed_connections.append(conn)
+                    conn.close()
+                except Exception:
+                    # If we can't get a connection, just continue
+                    pass
+                    
+            # Log the number of connections closed
+            logger.info(f"Closed {len(closed_connections)} database connections")
+            
+            # Reset the connection pool
+            self._connection_pool = Queue(maxsize=10)
+            
         except sqlite3.Error as e:
             logger.error(f"Error closing database connections: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error closing database connections: {e}")
 
     def execute_query(self, query: str, params: tuple = None) -> Optional[List[Dict]]:
         """Execute a SQL query with proper transaction handling"""
@@ -113,7 +147,7 @@ class DatabaseManager:
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (search_term_id) REFERENCES search_terms (id)
             )''',
-            '''CREATE TABLE IF NOT EXISTS cleaned_articles (
+            '''CREATE TABLE IF NOT EXISTS relevant_articles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 raw_article_id INTEGER,
                 relevance_score REAL CHECK (relevance_score >= 0 AND relevance_score <= 1),
@@ -154,46 +188,78 @@ class ArticleManager:
         except sqlite3.Error:
             return False
 
-    def insert_article(self, article_data: dict, search_term_id: int) -> Optional[int]:
-        """Insert an article with improved error handling and logging"""
+    def insert_article(self, article_data: dict, search_term_id: Optional[int] = None) -> Optional[int]:
+        """
+        Insert an article into the raw_articles table with improved error handling and field normalization.
+        
+        Args:
+            article_data (dict): Dictionary containing article data with flexible field names
+            search_term_id (Optional[int]): ID of associated search term, can also be in article_data
+            
+        Returns:
+            Optional[int]: ID of inserted/existing article, None if operation fails
+            
+        Example:
+            article_data = {
+                'title': 'Article Title',
+                'content': 'Article content',
+                'url': 'https://example.com',
+                'source': {'name': 'Source Name'} or 'Source Name',
+                'url_to_image': 'image_url',
+                'published_at': '2025-05-08'
+            }
+        """
         try:
-            if self.article_exists(article_data['url']):
-                logger.info(f"Skipping duplicate article: {article_data['url']}")
+            # Extract and normalize data with defaults for optional fields
+            data = {
+                'title': article_data.get('title', ''),
+                'content': article_data.get('content', '') or article_data.get('description', ''),
+                'url': article_data.get('url', ''),
+                'search_term_id': search_term_id or article_data.get('search_term_id'),
+                'published_at': article_data.get('published_at', '') or article_data.get('publishedAt', ''),
+                'url_to_image': article_data.get('url_to_image', '') or article_data.get('urlToImage', '')
+            }
+            
+            # Process source field
+            source = article_data.get('source', '')
+            data['source'] = source.get('name') if isinstance(source, dict) else str(source)
+            
+            # Validate required fields
+            if not all(data[key] for key in ['title', 'content', 'url']):
+                logger.error(f"Missing required fields in article data: {data}")
                 return None
-
-            if not all(key in article_data for key in ['title', 'content', 'url']):
-                logger.error(f"Missing required fields in article data: {article_data}")
-                return None
-
-            query = """
-                INSERT INTO raw_articles (
-                    search_term_id, title, content, source, url, 
-                    url_to_image, published_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """
-
-            # Handle the source field correctly
-            source = article_data.get('source', {})
-            source_name = source.get('name') if isinstance(source, dict) else str(source)
-
-            params = (
-                search_term_id,
-                article_data['title'],
-                article_data.get('content') or article_data.get('description', ''),  # Fallback to description if content is empty
-                source_name,
-                article_data['url'],
-                article_data.get('urlToImage', ''),
-                article_data.get('publishedAt', '')
+                
+            # Check if article already exists by URL
+            existing = self.db_manager.execute_query(
+                "SELECT id FROM raw_articles WHERE url = ?",
+                (data['url'],)
             )
-
-            with self.db_manager.get_connection() as conn:
-                cur = conn.cursor()
-                cur.execute(query, params)
-                article_id = cur.lastrowid
-                conn.commit()
-                logger.info(f"Successfully inserted article '{article_data['title']}' with ID {article_id}")
+            
+            if existing:
+                logger.debug(f"Article already exists with URL: {data['url']}")
+                return existing[0]['id']
+            
+            # Insert new article
+            query = """
+                INSERT INTO raw_articles 
+                (title, content, source, url, url_to_image, published_at, search_term_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+            values = (
+                data['title'], data['content'], data['source'],
+                data['url'], data['url_to_image'], data['published_at'],
+                data['search_term_id']
+            )
+            
+            result = self.db_manager.execute_query(query, values)
+            if result and hasattr(result, 'lastrowid'):
+                article_id = result.lastrowid
+                logger.info(f"Successfully inserted article '{data['title']}' with ID {article_id}")
                 return article_id
-
+            else:
+                logger.error("Failed to get lastrowid from insert operation")
+                return None
+                
         except Exception as e:
             logger.error(f"Error inserting article '{article_data.get('title', 'Unknown')}': {e}")
             return None
@@ -217,98 +283,108 @@ class ArticleManager:
         # Return the first item if result exists, otherwise None
         return result[0] if result else None
 
-    def insert_cleaned_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float):
-        """Insert an article into the cleaned_articles table."""
-        logger.info(f"Inserting cleaned article with raw_article_id: {raw_article_id}")  # ADDED LOGGING
-        query = """
-            INSERT INTO cleaned_articles (
-                raw_article_id, title, content, source, url, 
-                url_to_image, published_at, relevance_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    def insert_relevant_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float) -> bool:
         """
-        params = (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
-        self.db_manager.execute_query(query, params)
+        Insert an article into the relevant_articles table with duplication checking.
+        
+        Args:
+            raw_article_id: ID of the raw article
+            title: Article title
+            content: Article content
+            source: Article source
+            url: Article URL (used for duplication checking)
+            url_to_image: URL to article image
+            published_at: Publication date
+            relevance_score: Relevance score (0-1)
+            
+        Returns:
+            bool: True if insertion was successful, False otherwise
+        """
+        try:
+            # Check if article already exists in relevant_articles by URL
+            existing = self.db_manager.execute_query(
+                "SELECT id FROM relevant_articles WHERE url = ?",
+                (url,)
+            )
+            
+            if existing:
+                logger.info(f"Article already exists in relevant_articles with URL: {url}")
+                return True  # Consider it a success since the article is already there
+                
+            # Check if article already exists in relevant_articles by raw_article_id
+            existing = self.db_manager.execute_query(
+                "SELECT id FROM relevant_articles WHERE raw_article_id = ?",
+                (raw_article_id,)
+            )
+            
+            if existing:
+                logger.info(f"Article already exists in relevant_articles with raw_article_id: {raw_article_id}")
+                return True  # Consider it a success since the article is already there
+            
+            logger.info(f"Inserting relevant article with raw_article_id: {raw_article_id}")
+            query = """
+                INSERT INTO relevant_articles (
+                    raw_article_id, title, content, source, url, 
+                    url_to_image, published_at, relevance_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            params = (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
+            self.db_manager.execute_query(query, params)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error inserting relevant article: {e}")
+            return False
+            
+    # Keep the old method name for backward compatibility
+    def insert_cleaned_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float) -> bool:
+        """Legacy method that redirects to insert_relevant_article."""
+        logger.warning("insert_cleaned_article is deprecated, use insert_relevant_article instead")
+        return self.insert_relevant_article(raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
 
     def update_article(self, article):
         """Update an existing article in the raw_articles table."""
         try:
+            # Validate that the article has an ID
+            if not article.get('id'):
+                logger.error("Cannot update article without ID")
+                return False
+                
             query = """
                 UPDATE raw_articles 
-                SET title = ?, content = ?, description = ?, url = ?, url_to_image = ?
+                SET title = ?, content = ?, source = ?, url = ?, url_to_image = ?, published_at = ?
                 WHERE id = ?
             """
+            
+            # Extract source field properly
+            source = article.get('source', 'Unknown Source')
+            if isinstance(source, dict):
+                source = source.get('name', 'Unknown Source')
+                
             self.db_manager.execute_query(
                 query,
                 (
-                    article.get('title'),
-                    article.get('content'),
-                    article.get('description'),
-                    article.get('url'),
-                    article.get('url_to_image'),
+                    article.get('title', ''),
+                    article.get('content', ''),
+                    source,
+                    article.get('url', ''),
+                    article.get('url_to_image', ''),
+                    article.get('published_at', ''),
                     article.get('id')
                 )
             )
+            logger.info(f"Updated article with ID: {article.get('id')}")
             return True
         except Exception as e:
             logger.error(f"Error updating article: {e}")
             return False
-
-    def insert_raw_article(self, **article_data) -> Optional[int]:
-        """Insert a raw article into the database."""
-        try:
-            # Extract data with defaults for optional fields
-            data = {
-                'title': article_data.get('title', ''),
-                'content': article_data.get('content', ''),
-                'source': article_data.get('source', ''),
-                'url': article_data.get('url', ''),
-                'url_to_image': article_data.get('url_to_image', ''),
-                'published_at': article_data.get('published_at', ''),
-                'search_term_id': article_data.get('search_term_id')
-            }
-            
-            # Check if article already exists by URL
-            existing = self.db_manager.execute_query(
-                "SELECT id FROM raw_articles WHERE url = ?",
-                (data['url'],)
-            )
-            
-            if existing:
-                logger.debug(f"Article already exists with URL: {data['url']}")
-                return existing[0]['id']
-            
-            # Insert new article
-            query = """
-                INSERT INTO raw_articles 
-                (title, content, source, url, url_to_image, published_at, search_term_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """
-            values = (
-                data['title'], data['content'], data['source'],
-                data['url'], data['url_to_image'], data['published_at'],
-                data['search_term_id']
-            )
-            
-            # Execute the insert and get the cursor back
-            result = self.db_manager.execute_query(query, values)
-            if result and hasattr(result, 'lastrowid'):
-                article_id = result.lastrowid
-                logger.debug(f"Inserted raw article with ID: {article_id}")
-                return article_id
-            else:
-                logger.error("Failed to get lastrowid from insert operation")
-                return None
-            
-        except Exception as e:
-            logger.error(f"Error inserting raw article: {e}")
-            return None
 
     def get_unanalyzed_count(self) -> int:
         """Get count of articles that haven't been analyzed for relevance yet."""
         try:
             query = """
                 SELECT COUNT(*) as count FROM raw_articles 
-                WHERE id NOT IN (SELECT raw_article_id FROM cleaned_articles)
+                WHERE id NOT IN (SELECT raw_article_id FROM relevant_articles)
             """
             result = self.db_manager.execute_query(query)
             return result[0]['count'] if result else 0

@@ -1,7 +1,11 @@
+import base64
 import os
 import json
 from pathlib import Path
 from typing import Dict, Any
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from src.logger_config import setup_logging
 logger = setup_logging(__name__)
@@ -29,6 +33,8 @@ class ConfigManager:
     def __init__(self):
         """Initialize config manager and load config file from the project root."""
         self.config_path = self.get_config_path()
+        self.keys_path = str(Path(self.config_path).parent / ".api_keys")
+        self._encryption_key = self._get_encryption_key()
         self.config = self._load_config()
 
     def get_config_path(self) -> str:
@@ -36,10 +42,76 @@ class ConfigManager:
         project_root = Path(__file__).resolve().parent.parent
         return str(project_root / "config.json")
 
+    def _get_encryption_key(self) -> bytes:
+        """
+        Get or create encryption key for API keys.
+        
+        Uses a more secure approach with a random salt stored in a separate file.
+        """
+        key_file = Path(self.keys_path + ".key")
+        salt_file = Path(self.keys_path + ".salt")
+        
+        # If key already exists, return it
+        if key_file.exists() and salt_file.exists():
+            return key_file.read_bytes()
+        
+        # Generate new key with random salt
+        import os
+        import getpass
+        import hashlib
+        
+        # Generate a random salt
+        salt = os.urandom(16)
+        salt_file.write_bytes(salt)
+        
+        # Use machine-specific information as a base for the password
+        # This isn't perfect security but better than a hardcoded password
+        machine_id = hashlib.md5(os.uname().nodename.encode()).hexdigest()
+        
+        # Derive key using PBKDF2
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(machine_id.encode()))
+        key_file.write_bytes(key)
+        
+        return key
+
+    def _save_api_keys(self, keys: dict):
+        """Save API keys encrypted."""
+        try:
+            f = Fernet(self._encryption_key)
+            encrypted_data = f.encrypt(json.dumps(keys).encode())
+            with open(self.keys_path, 'wb') as file:
+                file.write(encrypted_data)
+        except Exception as e:
+            logger.error(f"Error saving API keys: {e}")
+
+    def _load_api_keys(self) -> dict:
+        """Load encrypted API keys."""
+        try:
+            if not os.path.exists(self.keys_path):
+                return {}
+            
+            f = Fernet(self._encryption_key)
+            with open(self.keys_path, 'rb') as file:
+                encrypted_data = file.read()
+            decrypted_data = f.decrypt(encrypted_data)
+            return json.loads(decrypted_data)
+        except Exception as e:
+            logger.error(f"Error loading API keys: {e}")
+            return {}
+
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration with secure handling of credentials"""
         config = {}
-        in_memory_keys = {}
+        
+        # Load saved API keys first
+        api_keys = self._load_api_keys()
+        config.update(api_keys)
         
         # Load from environment variables first with type conversion
         type_map = {
@@ -59,9 +131,6 @@ class ConfigManager:
                         config[key] = type_map[key](env_value)
                     else:
                         config[key] = env_value
-                        # Store API keys from env vars
-                        if key in ['NEWS_API_KEY', 'OPENAI_API_KEY'] and env_value:
-                            in_memory_keys[key] = env_value
                 except (ValueError, TypeError) as e:
                     logger.error(f"Error converting environment variable {key}: {e}")
                     config[key] = DEFAULT_CONFIG[key]
@@ -71,12 +140,7 @@ class ConfigManager:
             try:
                 with open(self.config_path, 'r', encoding="utf-8") as f:
                     file_config = json.load(f)
-                    # Merge file config, preserving API keys
-                    for key, value in file_config.items():
-                        if key in ['NEWS_API_KEY', 'OPENAI_API_KEY'] and value:
-                            in_memory_keys[key] = value
-                        elif value:  # Only use non-empty values from file
-                            config[key] = value
+                    config.update(file_config)
             except json.JSONDecodeError as e:
                 logger.error(f"Config file error: {e}")
         else:
@@ -87,37 +151,35 @@ class ConfigManager:
         for key, value in DEFAULT_CONFIG.items():
             if key not in config:
                 config[key] = value
-
-        # Restore API keys from memory
-        config.update(in_memory_keys)
         
         return config
 
     def save_config(self, config: Dict[str, Any]) -> None:
         """Save configuration with secure API key handling"""
         try:
-            # Store current API keys in memory
+            # Extract API keys
             api_keys = {
-                key: config.get(key, '') 
+                key: config[key]
                 for key in ['NEWS_API_KEY', 'OPENAI_API_KEY']
+                if key in config and config[key]
             }
             
-            # Create safe config for file
-            safe_config = config.copy()
-            for key in api_keys:
-                safe_config[key] = ''  # Clear sensitive values for file
+            # Save API keys separately if they exist
+            if api_keys:
+                self._save_api_keys(api_keys)
             
-            # Write safe config to file
+            # Save rest of config without API keys
+            safe_config = {k: v for k, v in config.items() if k not in api_keys}
             with open(self.config_path, 'w', encoding="utf-8") as f:
                 json.dump(safe_config, f, indent=4)
+                
+            # Update running config
+            self.config.update(config)
             
-            # Update in-memory config with API keys
-            self.config.update(api_keys)
+            logger.info("Config and API keys saved successfully")
             
-            logger.info("Config saved successfully with API keys preserved")
-            
-        except (OSError, IOError) as e:
-            logger.error(f"Error saving config file: {e}")
+        except Exception as e:
+            logger.error(f"Error saving config: {e}")
             raise
 
     def get(self, key: str, default: Any = None) -> Any:
