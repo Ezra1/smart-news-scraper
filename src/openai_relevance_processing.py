@@ -190,22 +190,28 @@ class ArticleProcessor(ArticleAnalysisMixin):
         try:
             # Get total unanalyzed articles for progress tracking
             total_unanalyzed = self.article_manager.get_unanalyzed_count()
-            analyzed_so_far = 0
+            remaining = total_unanalyzed
             results = []
             
             for i in range(0, len(articles), self.batch_size):
                 batch = articles[i:i + self.batch_size]
-                tasks = [self.process_article(article, total_unanalyzed - analyzed_so_far) 
-                        for article in batch]
                 
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Process articles one by one to properly update the remaining count
+                batch_results = []
+                for article in batch:
+                    result = await self.process_article(article, remaining)
+                    if result:
+                        batch_results.append(result)
+                    # Decrement remaining count after each article is processed
+                    remaining -= 1
+                
                 valid_results = [r for r in batch_results if not isinstance(r, Exception)]
                 results.extend(valid_results)
                 
                 # Update progress after each batch
-                analyzed_so_far += len(batch)
+                processed_so_far = total_unanalyzed - remaining
                 if hasattr(self, 'progress_callback'):
-                    self.progress_callback(analyzed_so_far, total_unanalyzed)
+                    self.progress_callback(processed_so_far, total_unanalyzed)
             
             return results
             
