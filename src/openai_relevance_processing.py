@@ -101,7 +101,7 @@ class ArticleProcessor(ArticleAnalysisMixin):
             # Get existing processing result if available
             if article_id:
                 existing = self.db_manager.execute_query(
-                    "SELECT relevance_score FROM cleaned_articles WHERE raw_article_id = ?", 
+                    "SELECT relevance_score FROM relevant_articles WHERE raw_article_id = ?", 
                     (article_id,)
                 )
                 if existing:

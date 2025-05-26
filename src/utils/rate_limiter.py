@@ -8,7 +8,7 @@ logger = setup_logging(__name__)
 class RateLimiter:
     """
     A unified rate limiter that supports both sync and async operations.
-    Can handle both requests per minute and requests per second limits.
+    Can handle both requests per minute and requests per second limits. 
     """
     def __init__(self, 
                  requests_per_minute: Optional[int] = None,
