@@ -26,29 +26,14 @@ async def test_process_single_article():
         test_article = {
             'title': 'New Pharmaceutical Supply Chain Security Measures Implemented',
             'content': '''Major pharmaceutical companies have implemented blockchain technology 
-                      to enhance supply chain security and prevent counterfeit medications. 
-                      The system includes end-to-end tracking of drug shipments and 
-                      temperature monitoring for sensitive medications. This initiative 
-                      aims to reduce the $200 billion counterfeit drug market.''',
+                      to enhance supply chain security and prevent counterfeit medications.''',
             'url': 'https://example.com/pharma-security',
-            'source': 'Test Source',
+            'source': {'name': 'Test Source'},  # Use dict format for source
             'published_at': datetime.now().isoformat()
         }
         
-        # Insert test article
-        cursor = db.connection.cursor()
-        cursor.execute("""
-            INSERT INTO raw_articles (title, content, url, source, published_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            test_article['title'],
-            test_article['content'],
-            test_article['url'],
-            test_article['source'],
-            test_article['published_at']
-        ))
-        db.connection.commit()
-        test_article['id'] = cursor.lastrowid
+        article_id = article_manager.insert_article(test_article)
+        test_article['id'] = article_id
 
         print("\n" + "="*80)
         print("Testing Article:")
@@ -72,11 +57,13 @@ async def test_process_single_article():
             relevance_filter = RelevanceFilter(article_manager)
             relevance_filter.process_result(result)
             
+            # Use the common analysis interface
+            analysis_results = relevance_filter.analyze_results()
+            
             print("\nRelevance Analysis:")
             print("="*80)
-            print(f"Relevant articles: {relevance_filter.relevant}")
-            print(f"Irrelevant articles: {relevance_filter.irrelevant}")
-            print(f"Max relevance score: {relevance_filter.max_relevance_score}")
+            for key, value in analysis_results.items():
+                print(f"{key}: {value}")
             print("="*80)
         else:
             print("\n❌ Article processing failed")
@@ -84,10 +71,18 @@ async def test_process_single_article():
     except Exception as e:
         print(f"\n❌ Error: {str(e)}")
     finally:
-        # Clean up test data
-        cursor.execute("DELETE FROM raw_articles WHERE id = ?", (test_article['id'],))
-        db.connection.commit()
-        db.close()
+        # Clean up test data using the proper DatabaseManager interface
+        if 'test_article' in locals() and 'id' in test_article:
+            try:
+                db.execute_query("DELETE FROM raw_articles WHERE id = ?", (test_article['id'],))
+                print(f"Cleaned up test article with ID: {test_article['id']}")
+            except Exception as e:
+                print(f"Error cleaning up test article: {e}")
+        
+        # Close database connection using the manager's method
+        if db:
+            db.close()
+            print("Database connection closed")
 
 if __name__ == "__main__":
     asyncio.run(test_process_single_article())

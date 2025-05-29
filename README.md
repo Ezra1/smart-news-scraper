@@ -1,6 +1,6 @@
 # Smart News Scraper
 
-A modern GUI application for scraping, analyzing, and managing news articles based on customizable search terms and AI-powered relevance filtering.
+A modern application for scraping, analyzing, and managing news articles based on customizable search terms and AI-powered relevance filtering. The system uses OpenAI's API to evaluate article relevance and provides both command-line and GUI interfaces.
 
 ## Features
 
@@ -10,40 +10,216 @@ A modern GUI application for scraping, analyzing, and managing news articles bas
 - 📊 **Visual Progress Tracking**: Real-time processing status and progress indicators
 - 💾 **Persistent Storage**: SQLite database for storing articles and search terms
 - 📁 **Import/Export**: Support for importing/exporting search terms and results
-- 🎨 **Modern UI**: Clean, intuitive interface with dark theme support
+- 🎨 **Modern UI**: Clean, intuitive PyQt6-based interface
+- 🔒 **Secure Configuration**: Encrypted storage of API keys
+- 📱 **Cross-Platform**: Works on Windows, macOS, and Linux
+- 📦 **Standalone Application**: Can be packaged as a standalone executable
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.8+
+- NewsAPI key (get one at [newsapi.org](https://newsapi.org/))
+- OpenAI API key (get one at [openai.com](https://platform.openai.com/))
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/smart-news-scraper.git
+   cd smart-news-scraper
+   ```
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Set up configuration:
+   ```bash
+   # Create a config.json file in the project root with your API keys
+   # Example:
+   {
+     "NEWS_API_KEY": "your_newsapi_key_here",
+     "OPENAI_API_KEY": "your_openai_api_key_here",
+     "RELEVANCE_THRESHOLD": 0.7
+   }
+   ```
+
+### Usage
+
+#### Command Line Interface
+
+Run the main script:
+```bash
+python main.py
+```
+
+This will:
+1. Load search terms from `search_terms.txt`
+2. Fetch articles based on those terms
+3. Process articles for relevance using OpenAI
+4. Save relevant articles to the database
+5. Export cleaned articles to your desktop
+
+#### GUI Interface
+
+Launch the GUI application:
+```bash
+python gui_main.py
+```
+
+The GUI provides:
+- Search term management (add, remove, import, export)
+- Article browsing with filtering options
+- Relevance filtering with adjustable threshold
+- Configuration settings for API keys
+- Real-time progress tracking
+- Export functionality (CSV, JSON, TXT)
 
 ## Configuration Options
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Relevance Threshold | Minimum relevance score for articles | 0.7 |
-| News API Key | Your NewsAPI authentication key | None |
-| OpenAI API Key | Your OpenAI API key for analysis | None |
+| RELEVANCE_THRESHOLD | Minimum relevance score for articles | 0.7 |
+| NEWS_API_KEY | Your NewsAPI authentication key | None |
+| OPENAI_API_KEY | Your OpenAI API key for analysis | None |
+| NEWS_API_URL | NewsAPI endpoint URL | https://newsapi.org/v2/everything |
+| NEWS_API_REQUESTS_PER_SECOND | Rate limit for NewsAPI | 1 |
+| OPENAI_REQUESTS_PER_MINUTE | Rate limit for OpenAI API | 60 |
+| BATCH_SIZE | Number of articles to process in parallel | 100 |
+| DATABASE_PATH | Path to SQLite database | news_articles.db |
+| LOGGING_LEVEL | Logging verbosity | INFO |
+| CHATGPT_CONTEXT_MESSAGE | System prompt for OpenAI | Custom relevance instructions |
 
-## Development
+Configuration is stored in `config.json` in the project root. API keys are stored securely using encryption.
 
-This project uses:
-- Python 3.8+
-- tkinter/ttk for the GUI
-- SQLite for data storage
-- NewsAPI for article fetching
-- OpenAI API for relevance analysis
+## Architecture
 
-### Project Structure
+### Core Components
+
+- **DatabaseManager**: Handles SQLite database operations with connection pooling
+- **ArticleManager**: Manages article storage and retrieval
+- **SearchTermManager**: Handles search term operations
+- **NewsArticleScraper**: Fetches articles from NewsAPI with rate limiting
+- **ArticleProcessor**: Processes articles using OpenAI for relevance scoring
+- **ArticleValidator**: Cleans and validates article content
+- **PipelineManager**: Orchestrates the entire processing workflow
+- **RelevanceFilter**: Filters articles based on relevance scores
+- **ConfigManager**: Manages configuration with secure API key storage
+- **RateLimiter**: Handles API rate limiting for external services
+
+### Data Flow
+
+1. **Search Terms** → Load from file or database
+2. **PipelineManager** → Coordinates the processing workflow
+3. **NewsArticleScraper** → Fetch articles from NewsAPI
+4. **ArticleValidator** → Clean and validate article content
+5. **ArticleManager** → Store raw articles in database
+6. **ArticleProcessor** → Process articles with OpenAI
+7. **RelevanceFilter** → Filter based on relevance scores
+8. **DatabaseManager** → Store cleaned articles
+9. **Output** → Export cleaned articles to file
+
+## Project Structure
+
 ```
 smart-news-scraper/
 ├── src/
-│   ├── gui.py              # Main GUI application
-│   ├── news_scraper.py     # News API integration
-│   ├── article_validator.py # Article validation
-│   ├── database_manager.py  # SQLite operations
-│   └── config.py           # Configuration management
-├── tests/                  # Unit tests
-└── docs/                   # Documentation
+│   ├── analysis_base.py         # Base class for article analysis
+│   ├── analysis_utils.py        # Shared analysis utilities
+│   ├── api_validator.py         # API validation
+│   ├── article_deduplicator.py  # Article deduplication
+│   ├── article_validator.py     # Article validation
+│   ├── config.py                # Configuration management
+│   ├── database_manager.py      # SQLite operations
+│   ├── extract_cleaned_articles.py # Export functionality
+│   ├── insert_processed_articles.py # Relevance filtering
+│   ├── insert_search_terms.py   # Search term management
+│   ├── logger_config.py         # Logging configuration
+│   ├── news_scraper.py          # News API integration
+│   ├── openai_client.py         # OpenAI client
+│   ├── openai_relevance_processing.py # OpenAI processing
+│   ├── pipeline_manager.py      # Processing pipeline
+│   ├── qt_gui.py                # PyQt6 GUI implementation
+│   └── utils/
+│       └── rate_limiter.py      # API rate limiting
+├── tests/                       # Unit tests
+├── batch/                       # Batch processing directories
+│   ├── input/                   # Input files for batch processing
+│   └── output/                  # Output files from batch processing
+├── output/                      # Output files directory
+├── data/                        # Data storage directory
+│   └── logs/                    # Application logs
+├── main.py                      # CLI entry point
+├── gui_main.py                  # GUI entry point
+├── build_installer.py           # Packaging script
+├── smart_news_scraper.spec      # PyInstaller specification
+├── migrate_db.py                # Database migration utility
+├── search_terms.txt             # Default search terms
+├── config.json                  # Configuration file
+└── requirements.txt             # Dependencies
 ```
+
+## Development
+
+### Running Tests
+
+```bash
+python -m pytest tests/
+```
+
+Individual tests can be run directly:
+
+```bash
+python -m pytest tests/test_openai_api.py
+```
+
+### Building a Standalone Executable
+
+The project includes PyInstaller configuration for creating standalone executables:
+
+```bash
+# Build the executable
+python build_installer.py
+```
+
+This will:
+1. Create necessary directories
+2. Generate a default config file if needed
+3. Build the executable using PyInstaller
+4. Package everything into a ZIP installer
+
+The resulting executable will be in `dist/SmartNewsScraper/`.
+
+### Adding New Features
+
+1. **New Search Source**: Extend the `NewsArticleScraper` class
+2. **Custom Relevance Logic**: Modify the `ArticleProcessor` class
+3. **New Export Format**: Add to the `extract_cleaned_articles.py` file
+4. **UI Enhancements**: Modify the `qt_gui.py` file
+
+## Troubleshooting
+
+- **API Rate Limits**: Adjust the rate limiting settings in config.json
+- **Database Errors**: Check file permissions for the SQLite database
+- **OpenAI Errors**: Verify your API key and check OpenAI service status
+- **GUI Issues**: Ensure PyQt6 is properly installed
+- **Packaging Errors**: Check the PyInstaller spec file and dependencies
+
+## System Requirements
+
+- **Operating System**: Windows 10+, macOS 10.14+, or Linux
+- **Memory**: 4GB RAM minimum, 8GB recommended
+- **Disk Space**: 500MB for installation, plus space for article storage
+- **Internet Connection**: Required for API access
 
 ## Acknowledgments
 
-- Built with [ttkthemes](https://ttkthemes.readthedocs.io/) for modern UI
 - Powered by [OpenAI](https://openai.com/) for article analysis
 - News data provided by [NewsAPI](https://newsapi.org/)
+- GUI built with [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
+- SQLite for efficient data storage
+- Python's asyncio for concurrent processing
+- PyInstaller for application packaging

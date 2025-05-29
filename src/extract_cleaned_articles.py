@@ -11,7 +11,7 @@ from src.config import ConfigManager
 logger = setup_logging(__name__)
 
 def extract_cleaned_data(db_path: str, output_file: str):
-    """Extract cleaned and relevant data from the database and save it to a .txt file."""
+    """Extract relevant articles from the database and save them to a .txt file."""
     conn = None  # Initialize conn to None
     try:
         if not os.path.exists(db_path):
@@ -26,7 +26,7 @@ def extract_cleaned_data(db_path: str, output_file: str):
         cursor = conn.cursor()
 
         query = """
-        SELECT title, content, url, relevance_score FROM cleaned_articles
+        SELECT title, content, url, relevance_score FROM relevant_articles
         WHERE relevance_score >= ?
         ORDER BY relevance_score DESC
         """
@@ -61,7 +61,7 @@ def extract_cleaned_data(db_path: str, output_file: str):
 if __name__ == "__main__":
     # Get user's desktop path
     desktop_path = str(Path.home() / "Desktop")
-    output_file = str(Path(desktop_path) / "cleaned_articles.txt")
+    output_file = str(Path(desktop_path) / "relevant_articles.txt")
     
     # Fix the database path construction
     project_root = Path(__file__).resolve().parent.parent
@@ -71,5 +71,5 @@ if __name__ == "__main__":
         logger.error(f"Database file not found: {db_path}")
         print(f"Error: Database file not found: {db_path}")
     else:
-        logger.info(f"Exporting cleaned articles to desktop: {output_file}")
+        logger.info(f"Exporting relevant articles to desktop: {output_file}")
         extract_cleaned_data(db_path, output_file)

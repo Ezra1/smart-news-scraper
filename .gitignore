@@ -1,14 +1,46 @@
-# __pycache__/
-# *.pyc
+# Python bytecode files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
 venv/
+env/
+ENV/
+
+# Environment variables
 .env
-# models/yolo/yolov5_weights.pt
+
+# Logs
 batch_processing.log
+src/data/news_scraper.log
+logs/*
+
+# Build directories
+dist/
+build/
+*.egg-info/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Project specific
 openAIFiles/batch_input.jsonl
 src/__pycache__
-src/data/news_scraper.log
 tests/__pycache__
 batch/*
 config.json
-logs/*
 data/*
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+*.zip
+*.log
+*.db
+__pycache__/
+*.pyc

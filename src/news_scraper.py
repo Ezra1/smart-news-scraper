@@ -1,6 +1,6 @@
 import aiohttp
 import asyncio
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
@@ -13,6 +13,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 from src.config import ConfigManager
+from src.utils.rate_limiter import RateLimiter
 
 class NewsArticleScraper:
     """
@@ -38,60 +39,94 @@ class NewsArticleScraper:
         self.article_manager = ArticleManager(self.db_manager)
         
         # Rate limiting settings
-        self.requests_per_second = config_manager.get("NEWS_API_REQUESTS_PER_SECOND", 1)
-        self._last_request_time = 0
+        requests_per_second = config_manager.get("NEWS_API_REQUESTS_PER_SECOND", 1)
+        self.rate_limiter = RateLimiter(requests_per_second=requests_per_second)
         
     async def fetch_articles(self, search_terms: List[str], search_term_map: Dict[str, int]) -> List[dict]:
-        """Fetch articles for given search terms."""
+        """
+        Fetch and process articles for multiple search terms.
+        
+        Args:
+            search_terms: List of search terms
+            search_term_map: Mapping of search terms to their database IDs
+            
+        Returns:
+            List[dict]: Processed and stored articles
+        """
         all_articles = []
         self.rate_limited = False
         
         for term in search_terms:
             try:
-                await self._wait_for_rate_limit()
+                # Fetch raw articles for the term
+                raw_articles = await self._fetch_for_term(term)
                 
-                # Handle multi-language search by removing language restriction
-                # and using both original and English variations
-                params = {
-                    "q": term,
-                    "apiKey": self.api_key,
-                    "sortBy": "relevancy",  # Changed from publishedAt to get most relevant results
-                    "pageSize": 100,
-                    "from": (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
-                    "to": datetime.now().strftime("%Y-%m-%d"),
-                    "searchIn": "title,description,content"  # Explicitly set search fields
-                }
-                
-                # Try without language restriction first
-                articles = await self._make_api_request(params)
-                if not articles:
-                    # If no results, try with English
-                    params["language"] = "en"
-                    articles = await self._make_api_request(params)
-                
+                if self.rate_limited:
+                    break
+                    
                 # Process and store articles
-                for article in articles:
+                for article in raw_articles:
                     article_data = {
                         "title": article.get("title"),
                         "content": article.get("content") or article.get("description", ""),
-                        "source": article.get("source", {}).get("name"),
+                        "source": article.get("source", {}),
                         "url": article.get("url"),
                         "url_to_image": article.get("urlToImage"),
                         "published_at": article.get("publishedAt"),
                         "search_term_id": search_term_map.get(term)
                     }
                     
-                    article_id = self.article_manager.insert_raw_article(**article_data)
+                    article_id = self.article_manager.insert_article(article_data)
                     if article_id:
                         article_data["id"] = article_id
                         all_articles.append(article_data)
-                
-                logger.info(f"Fetched {len(articles)} articles for term '{term}'")
-                
+                        
+                logger.info(f"Processed {len(raw_articles)} articles for term '{term}'")
+                    
             except Exception as e:
-                logger.error(f"Error fetching articles for term '{term}': {str(e)}")
+                logger.error(f"Error processing articles for term '{term}': {str(e)}")
                 
         return all_articles
+    
+    async def _fetch_for_term(self, term: str) -> List[Dict]:
+        """
+        Fetch articles for a single search term from the news API.
+        
+        Args:
+            term (str): The search term to query for
+            
+        Returns:
+            List[Dict]: List of article dictionaries containing metadata and content
+        """
+        logger.info(f"Fetching articles for term: {term}")
+        
+        try:
+            await self._wait_for_rate_limit()
+            
+            params = {
+                "q": term,
+                "apiKey": self.api_key,
+                "sortBy": "relevancy",
+                "pageSize": 100,
+                "from": (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
+                "to": datetime.now().strftime("%Y-%m-%d"),
+                "searchIn": "title,description,content"
+            }
+            
+            # Try without language restriction first
+            articles = await self._make_api_request(params)
+            
+            if not articles:
+                logger.info(f"No results found for '{term}', retrying with English language filter")
+                params["language"] = "en"
+                articles = await self._make_api_request(params)
+            
+            logger.info(f"Found {len(articles)} articles for term: {term}")
+            return articles
+            
+        except Exception as e:
+            logger.error(f"Error fetching articles for term '{term}': {str(e)}")
+            return []
 
     async def _make_api_request(self, params: dict) -> List[dict]:
         """Make request to NewsAPI with error handling."""
@@ -116,11 +151,7 @@ class NewsArticleScraper:
 
     async def _wait_for_rate_limit(self):
         """Implement rate limiting."""
-        current_time = datetime.now().timestamp()
-        time_since_last = current_time - self._last_request_time
-        if time_since_last < (1.0 / self.requests_per_second):
-            await asyncio.sleep((1.0 / self.requests_per_second) - time_since_last)
-        self._last_request_time = datetime.now().timestamp()
+        await self.rate_limiter.wait_if_needed_async()
 
     async def fetch_all_articles(self, search_terms: List[Dict]) -> List[Dict]:
         """
