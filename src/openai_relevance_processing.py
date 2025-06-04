@@ -42,9 +42,9 @@ class ArticleProcessor(ArticleAnalysisMixin):
         self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
         
         # Initialize tracking variables
-        self.total_relevant = 0
         self.relevant = 0
         self.irrelevant = 0
+        self.total_relevant = 0  # Will be kept in sync with self.relevant
         self.max_relevance_score = 0.0
         self.RELEVANCE_THRESHOLD = self.config_manager.get("RELEVANCE_THRESHOLD")
         logger.info(f"Initialized ArticleProcessor with relevance threshold: {self.RELEVANCE_THRESHOLD}")
@@ -153,7 +153,6 @@ class ArticleProcessor(ArticleAnalysisMixin):
                     # Process and store relevant articles
                     if relevance_score >= self.RELEVANCE_THRESHOLD:
                         logger.info(f"Article with ID '{raw_article_id}' is relevant (score: {relevance_score})")
-                        self.total_relevant += 1
                         self.relevant += 1  # Increment relevant count
                         self.max_relevance_score = max(self.max_relevance_score, relevance_score)
 
@@ -173,6 +172,8 @@ class ArticleProcessor(ArticleAnalysisMixin):
                         self.irrelevant += 1
                         logger.info(f"❌ Article with ID '{raw_article_id}' is not relevant (score: {relevance_score})")
 
+                    # Update total relevant count based on actual relevant count
+                    self.total_relevant = self.relevant
                     logger.info(f"Total relevant articles: {self.total_relevant}")
                     logger.info(f"Remaining articles to process: {remaining}")
 
@@ -188,12 +189,12 @@ class ArticleProcessor(ArticleAnalysisMixin):
     async def process_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process articles in optimized batches"""
         try:
-            # Get total unanalyzed articles for progress tracking
-            total_unanalyzed = self.article_manager.get_unanalyzed_count()
-            remaining = total_unanalyzed
+            # Use the actual count of articles being processed for tracking
+            total_to_process = len(articles)
+            remaining = total_to_process
             results = []
             
-            for i in range(0, len(articles), self.batch_size):
+            for i in range(0, total_to_process, self.batch_size):
                 batch = articles[i:i + self.batch_size]
                 
                 # Process articles one by one to properly update the remaining count
@@ -209,9 +210,9 @@ class ArticleProcessor(ArticleAnalysisMixin):
                 results.extend(valid_results)
                 
                 # Update progress after each batch
-                processed_so_far = total_unanalyzed - remaining
+                processed_so_far = total_to_process - remaining
                 if hasattr(self, 'progress_callback'):
-                    self.progress_callback(processed_so_far, total_unanalyzed)
+                    self.progress_callback(processed_so_far, total_to_process)
             
             return results
             

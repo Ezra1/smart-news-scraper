@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 from pathlib import Path
 
@@ -20,10 +21,28 @@ def setup_logging(name: str = None) -> logging.Logger:
     log_file = log_dir / "news_scraper.log"
     
     # Configure logging with both file and console handlers
-    handlers = [
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
+    # Use UTF-8 encoding for file handler
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    
+    # For console output, create a custom StreamHandler with error handling
+    class EncodingStreamHandler(logging.StreamHandler):
+        def emit(self, record):
+            try:
+                msg = self.format(record)
+                stream = self.stream
+                # Write with error handling for encoding issues
+                try:
+                    stream.write(msg + self.terminator)
+                except UnicodeEncodeError:
+                    # Fall back to replacing problematic characters
+                    stream.write(msg.encode(stream.encoding, errors='replace').decode(stream.encoding) + self.terminator)
+                self.flush()
+            except Exception:
+                self.handleError(record)
+    
+    console_handler = EncodingStreamHandler(sys.stdout)
+    
+    handlers = [file_handler, console_handler]
     
     # Set format for all handlers
     formatter = logging.Formatter(

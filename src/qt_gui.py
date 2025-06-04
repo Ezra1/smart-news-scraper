@@ -905,7 +905,8 @@ class NewsScraperGUI(QMainWindow):
 
     def _handle_processing_complete(self, results):
         """Handle completion of processing with proper UI updates"""
-        logger.info(f"Processing completed with {len(results) if results else 0} results")
+        result_count = len(results) if results else 0
+        logger.info(f"Processing completed with {result_count} results")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._processing = False
@@ -919,8 +920,19 @@ class NewsScraperGUI(QMainWindow):
             # Update results tab and UI
             self._update_results(results)
             self._update_previews()
-            QMessageBox.information(self, "Success", f"Processed {len(results)} articles successfully")
-            logger.info(f"Successfully processed {len(results)} articles")
+            
+            # Get the actual count of relevant articles from the database
+            relevant_count = 0
+            try:
+                query_result = self.db_manager.execute_query("SELECT COUNT(*) as count FROM relevant_articles")
+                if query_result:
+                    relevant_count = query_result[0]['count']
+            except Exception as e:
+                logger.error(f"Error getting relevant article count: {e}")
+            
+            # Use the database count for the success message
+            QMessageBox.information(self, "Success", f"Processed {result_count} articles successfully. Found {relevant_count} relevant articles.")
+            logger.info(f"Successfully processed {result_count} articles. Found {relevant_count} relevant articles.")
         else:
             self._reset_phase_statuses()
             QMessageBox.warning(self, "Warning", "No articles were processed")
