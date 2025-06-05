@@ -7,6 +7,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 
 # Environment variables
 .env
@@ -15,15 +16,29 @@ ENV/
 batch_processing.log
 src/data/news_scraper.log
 logs/*
+*.log
 
-# Build directories
+# Build directories and artifacts
 dist/
 build/
 *.egg-info/
+installer/
+output/
 
 # PyInstaller
 *.manifest
 *.spec
+warn-*.txt
+xref-*.html
+
+# Installer files
+*.exe
+*.msi
+*.zip
+*.cab
+*.wixobj
+*.wixpdb
+components.wxs
 
 # Project specific
 openAIFiles/batch_input.jsonl
@@ -32,15 +47,22 @@ tests/__pycache__
 batch/*
 config.json
 data/*
+*.db
 
 # IDE specific files
 .idea/
 .vscode/
 *.swp
 *.swo
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
 
-*.zip
-*.log
-*.db
-__pycache__/
-*.pyc
+# OS specific files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
