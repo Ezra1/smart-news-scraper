@@ -2,52 +2,62 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
 
 # Virtual environments
 venv/
 env/
 ENV/
 .venv/
+.env/
+.venv
 
-# Environment variables
+# Environment variables and secrets
 .env
+.env.*
+!.env.example
+config/.api_keys
+config/.api_keys.*
+!.api_keys.example
 
 # Logs
-batch_processing.log
-src/data/news_scraper.log
-logs/*
+logs/
 *.log
+batch_processing.log
+news_scraper.log
 
-# Build directories and artifacts
-dist/
-build/
-*.egg-info/
+# Build and installer files
+build_scripts/*.exe
+build_scripts/*.msi
+build_scripts/*.zip
+build_scripts/*.cab
+build_scripts/*.wixobj
+build_scripts/*.wixpdb
+build_scripts/components.wxs
 installer/
+
+# Database and data files
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-journal
+data/*.sqlite-journal
+data/*.sqlite3-journal
+
+# Output files
 output/
-
-# PyInstaller
-*.manifest
-*.spec
-warn-*.txt
-xref-*.html
-
-# Installer files
-*.exe
-*.msi
-*.zip
-*.cab
-*.wixobj
-*.wixpdb
-components.wxs
-
-# Project specific
-openAIFiles/batch_input.jsonl
-src/__pycache__
-tests/__pycache__
-batch/*
-config.json
-data/*
-*.db
+batch/input/*
+batch/output/*
+!batch/input/.gitkeep
+!batch/output/.gitkeep
 
 # IDE specific files
 .idea/
@@ -59,6 +69,9 @@ data/*
 *.user
 *.userosscache
 *.sln.docstates
+.project
+.pydevproject
+.settings/
 
 # OS specific files
 .DS_Store
@@ -66,3 +79,41 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+*.tmp
+*.bak
+*.swp
+*~.nib
+
+# Test coverage
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# PyInstaller
+*.manifest
+*.spec
+warn-*.txt
+xref-*.html

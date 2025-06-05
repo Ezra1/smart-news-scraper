@@ -20,3 +20,6 @@ html5lib>=1.1
 
 # Testing
 pytest>=7.0.0
+
+# Build dependencies
+cx_Freeze>=6.15.0

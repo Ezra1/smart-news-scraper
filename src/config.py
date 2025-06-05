@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "OPENAI_REQUESTS_PER_MINUTE": 60,  # Add missing OpenAI rate limit
     "RELEVANCE_THRESHOLD": 0.6,
     "BATCH_SIZE": 100,
-    "DATABASE_PATH": "news_articles.db",
+    "DATABASE_PATH": "data/news_articles.db",
     "LOGGING_LEVEL": "INFO",
     "OUTPUT_DIR": "output",
     "CHATGPT_CONTEXT_MESSAGE": {  # Add default system message
@@ -38,9 +38,9 @@ class ConfigManager:
         self.config = self._load_config()
 
     def get_config_path(self) -> str:
-        """Ensure config.json is stored in the main project directory, not src/."""
+        """Ensure config.json is stored in the config directory."""
         project_root = Path(__file__).resolve().parent.parent
-        return str(project_root / "config.json")
+        return str(project_root / "config" / "config.json")
 
     def _get_encryption_key(self) -> bytes:
         """
