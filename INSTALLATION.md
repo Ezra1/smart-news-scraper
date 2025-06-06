@@ -8,13 +8,13 @@ This document provides instructions for installing and running the Smart News Sc
 
 1. Download the ZIP installer (`SmartNewsScraper_v[DATE].zip`)
 2. Extract the ZIP file to a location of your choice
-3. Run `SmartNewsScraper.exe` from the extracted folder
+3. Run `SmartNewsScraper.exe` from the extracted folder to open the GUI
 
 ### Option 2: Using the Standalone Executable
 
 1. Download the standalone executable (`SmartNewsScraper.exe`)
 2. Place it in a folder of your choice
-3. Run the executable
+3. Run the executable to open the GUI
 
 ## First-Time Setup
 

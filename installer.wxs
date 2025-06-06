@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Smart News Scraper" Language="1033" Version="1.0.0" Manufacturer="Smart News" UpgradeCode="12345678-1234-1234-1234-123456789abc">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MediaTemplate />
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Smart News Scraper" />
+      </Directory>
+    </Directory>
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="*">
+        <File Source="dist\SmartNewsScraper\SmartNewsScraper.exe" />
+      </Component>
+    </DirectoryRef>
+    <Feature Id="DefaultFeature" Level="1">
+      <ComponentRef Id="MainExecutable" />
+    </Feature>
+  </Product>
+</Wix>

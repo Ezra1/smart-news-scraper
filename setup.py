@@ -40,7 +40,7 @@ setup(
     options={"build_exe": build_exe_options},
     executables=[
         Executable(
-            "main.py",
+            "gui_main.py",
             base=base,
             target_name="SmartNewsScraper.exe",
             icon="config/icon.ico",
