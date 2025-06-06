@@ -178,7 +178,8 @@ python -m pytest tests/test_openai_api.py
 
 ### Building a Standalone Executable
 
-The project includes PyInstaller configuration for creating standalone executables:
+The project includes PyInstaller configuration for creating standalone executables.
+The bundled application runs the GUI entry point defined in `gui_main.py`:
 
 ```bash
 # Build the executable
@@ -192,6 +193,7 @@ This will:
 4. Package everything into a ZIP installer
 
 The resulting executable will be in `dist/SmartNewsScraper/`.
+Double-click `SmartNewsScraper.exe` to launch the graphical interface.
 
 ### Adding New Features
 
