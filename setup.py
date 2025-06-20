@@ -19,7 +19,10 @@ build_exe_options = {
         "requirements.txt",
         "README.md",
         "INSTALLATION.md",
-        "INSTALLER.md"
+        "INSTALLER.md",
+        "CHANGELOG.md",
+        "pharmaceutical_search_terms.txt",
+        "ai_context_prompt.txt"
     ],
     "include_msvcr": True,
     "zip_include_packages": "*",

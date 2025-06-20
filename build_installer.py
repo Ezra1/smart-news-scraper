@@ -31,6 +31,27 @@ def build_executable() -> None:
     subprocess.check_call(cmd)
 
 
+def move_docs_to_root() -> None:
+    """Ensure documentation files reside in the distribution root."""
+    output_dir = DIST_DIR / "SmartNewsScraper"
+    internal = output_dir / "_internal"
+    if not internal.exists():
+        return
+    docs = [
+        "README.md",
+        "requirements.txt",
+        "setup.py",
+        "CHANGELOG.md",
+        "pharmaceutical_search_terms.txt",
+        "ai_context_prompt.txt",
+    ]
+    for doc in docs:
+        src = internal / doc
+        dest = output_dir / doc
+        if src.exists():
+            shutil.copy(src, dest)
+
+
 def package_zip() -> None:
     date_str = datetime.datetime.now().strftime("%Y%m%d")
     src = DIST_DIR / "SmartNewsScraper"
@@ -43,6 +64,7 @@ def main() -> None:
     ensure_directories()
     ensure_config()
     build_executable()
+    move_docs_to_root()
     package_zip()
 
 

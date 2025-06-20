@@ -58,7 +58,7 @@ python main.py
 ```
 
 This will:
-1. Load search terms from `search_terms.txt`
+1. Load search terms from `search_terms.txt` (or another list such as `pharmaceutical_search_terms.txt`)
 2. Fetch articles based on those terms
 3. Process articles for relevance using OpenAI
 4. Save relevant articles to the database
@@ -166,6 +166,12 @@ smart-news-scraper/
 └── requirements.txt             # Dependencies
 ```
 
+## Additional Files
+
+- `pharmaceutical_search_terms.txt` - Example OSINT keywords focused on pharmaceutical security
+- `ai_context_prompt.txt` - Default system prompt used for relevance analysis
+- `CHANGELOG.md` - Project release notes
+
 ## Development
 
 ### Running Tests
@@ -200,6 +206,23 @@ This will:
 
 The resulting executable will be in `dist/SmartNewsScraper/`.
 Double-click `SmartNewsScraper.exe` to launch the graphical interface.
+
+### Distribution Contents
+
+The `dist/SmartNewsScraper` folder includes the executable along with an
+`_internal` directory that stores Python runtime files like
+`base_library.zip`. This file is required by the application and should
+remain in `_internal`.
+
+Documentation files are copied to the top level of the distribution so
+they are easy to find:
+
+- `README.md`
+- `requirements.txt`
+- `setup.py`
+- `CHANGELOG.md`
+- `pharmaceutical_search_terms.txt`
+- `ai_context_prompt.txt`
 
 ### Adding New Features
 
