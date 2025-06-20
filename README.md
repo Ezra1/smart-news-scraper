@@ -58,7 +58,7 @@ python main.py
 ```
 
 This will:
-1. Load search terms from `search_terms.txt`
+1. Load search terms from `search_terms.txt` (or another list such as `pharmaceutical_search_terms.txt`)
 2. Fetch articles based on those terms
 3. Process articles for relevance using OpenAI
 4. Save relevant articles to the database
@@ -165,6 +165,13 @@ smart-news-scraper/
 │   └── config.template.json     # Copy to config.json and add your keys
 └── requirements.txt             # Dependencies
 ```
+
+## Additional Files
+
+- `pharmaceutical_search_terms.txt` - Example OSINT keywords focused on pharmaceutical security
+- `ai_context_prompt.txt` - Default system prompt used for relevance analysis
+- `LICENSE` - MIT license for the project
+- `CHANGELOG.md` - Project release notes
 
 ## Development
 
