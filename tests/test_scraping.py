@@ -4,13 +4,13 @@ from unittest.mock import Mock, patch
 from src.news_scraper import NewsArticleScraper
 
 class MockConfigManager:
-    def get(self, key):
+    def get(self, key, default=None):
         config = {
             "NEWS_API_KEY": "test_api_key",
             "NEWS_API_URL": "http://test.api/v2/everything",
             "NEWS_API_REQUESTS_PER_SECOND": 1
         }
-        return config.get(key)
+        return config.get(key, default)
 
 @pytest.fixture
 def scraper():

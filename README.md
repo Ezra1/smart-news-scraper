@@ -94,7 +94,9 @@ The GUI provides:
 | LOGGING_LEVEL | Logging verbosity | INFO |
 | CHATGPT_CONTEXT_MESSAGE | System prompt for OpenAI | Custom relevance instructions |
 
-Configuration is stored in `config/config.json`. API keys are stored securely using encryption.
+Configuration is stored in `config/config.json` (create this file by copying
+`config/config.template.json` and updating your keys). API keys are stored
+securely using encryption.
 
 ## Architecture
 
@@ -160,7 +162,7 @@ smart-news-scraper/
 ├── migrate_db.py                # Database migration utility
 ├── search_terms.txt             # Default search terms
 ├── config/
-│   └── config.json              # Configuration file
+│   └── config.template.json     # Copy to config.json and add your keys
 └── requirements.txt             # Dependencies
 ```
 
@@ -181,6 +183,8 @@ python -m pytest tests/test_openai_api.py
 ### Building a Standalone Executable
 
 The project includes PyInstaller configuration for creating standalone executables.
+**Important**: You must run the build on Windows (or inside a Windows VM) because
+PyInstaller cannot cross-compile Windows binaries from Linux.
 The bundled application runs the GUI entry point defined in `gui_main.py`:
 
 ```bash
