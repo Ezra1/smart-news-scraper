@@ -195,13 +195,21 @@ class PipelineManager:
                 article_id = article.get('id')
                 if article_id is None:
                     logger.warning(f"Missing ID for article: {article.get('url', 'No URL')}")
-                
+
                 if clean_article := self.validator.clean_article(article):
                     clean_article['id'] = article_id  # Preserve the ID
                     cleaned.append(clean_article)
+
+                # Report progress for cleaning phase
                 self.progress_callback(i, total)
-            
-            self.status_callback(f"Cleaned {len(cleaned)} articles", False, False, True)
+                self.status_callback(f"Cleaned {i}/{total} articles", False, False, False)
+
+            self.status_callback(
+                f"Completed cleaning {len(cleaned)}/{total} articles",
+                False,
+                False,
+                True,
+            )
             return cleaned
         except Exception as e:
             self.status_callback(f"Clean error: {str(e)}", True, False, False)
@@ -225,8 +233,22 @@ class PipelineManager:
         """
         try:
             self.status_callback("Analyzing articles...", False, False, False)
+
+            # Forward progress from the processor to the callbacks
+            self.processor.progress_callback = (
+                lambda current, total: (
+                    self.progress_callback(current, total),
+                    self.status_callback(
+                        f"Analyzed {current}/{total} articles", False, False, False
+                    )
+                )
+            )
+
             results = await self.processor.process_articles(articles)
-            self.status_callback(f"Analyzed {len(results)} articles", False, False, True)
+
+            self.status_callback(
+                f"Analyzed {len(results)} articles", False, False, True
+            )
             return results
         except Exception as e:
             self.status_callback(f"Analysis error: {str(e)}", True, False, False)

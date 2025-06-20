@@ -22,7 +22,8 @@ def setup_logging(name: str = None) -> logging.Logger:
     
     # Configure logging with both file and console handlers
     # Use UTF-8 encoding for file handler
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+    # Start each run with a fresh log file
+    file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
     
     # For console output, create a custom StreamHandler with error handling
     class EncodingStreamHandler(logging.StreamHandler):

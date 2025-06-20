@@ -26,9 +26,16 @@ DEFAULT_CONFIG = {
     "DATABASE_PATH": "data/news_articles.db",
     "LOGGING_LEVEL": "INFO",
     "OUTPUT_DIR": "output",
-    "CHATGPT_CONTEXT_MESSAGE": {  # Add default system message
+    "CHATGPT_CONTEXT_MESSAGE": {
         "role": "system",
-        "content": "You are an AI trained to analyze news articles for relevance. Rate each article's relevance from 0.0 to 1.0."
+        "content": (
+            "You are assessing relevance for a pharmaceutical security intelligence "
+            "analysis team. Examine each news article and decide whether it discusses "
+            "threats such as counterfeit medication, theft, diversion, smuggling, "
+            "supply chain disruption or any other security issue in the pharmaceutical "
+            "sector. Provide a relevance score from 0 (not relevant) to 1 (highly "
+            "relevant) and a short explanation."
+        )
     }
 }
 
