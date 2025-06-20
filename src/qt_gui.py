@@ -1152,6 +1152,30 @@ class NewsScraperGUI(QMainWindow):
             QMessageBox.warning(self, "Warning", "No results to export")
             return
 
+        # Get the current relevance filter setting
+        relevance_idx = self.relevance_filter.currentIndex()
+        min_relevance = {
+            0: 0.0,    # All
+            1: 0.3,    # Low
+            2: 0.5,    # Medium
+            3: 0.7,    # High
+            4: 0.9     # Very High
+        }.get(relevance_idx, 0.0)
+        
+        # Get the current search filter
+        search_text = self.search_box.text().lower()
+        
+        # Filter results based on current criteria
+        filtered_results = [
+            result for result in self.all_results
+            if (search_text in result.get('title', '').lower() and 
+                result.get('relevance_score', 0) >= min_relevance)
+        ]
+        
+        if not filtered_results:
+            QMessageBox.warning(self, "Warning", "No results match your current filter criteria")
+            return
+
         file_path, file_type = QFileDialog.getSaveFileName(
             self,
             "Export Results",
@@ -1165,42 +1189,42 @@ class NewsScraperGUI(QMainWindow):
         try:
             # Write results based on file type
             if file_path.endswith('.csv'):
-                self._export_to_csv(file_path)
+                self._export_to_csv(file_path, filtered_results)
             elif file_path.endswith('.json'):
-                self._export_to_json(file_path)
+                self._export_to_json(file_path, filtered_results)
             else:
-                self._export_to_txt(file_path)
+                self._export_to_txt(file_path, filtered_results)
                 
             QMessageBox.information(self, "Success", f"Results exported to {file_path}")
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
 
-    def _export_to_csv(self, file_path):
+    def _export_to_csv(self, file_path, results):
         """Export results to CSV format"""
         import csv
         
         with open(file_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=['title', 'relevance_score', 'url'])
             writer.writeheader()
-            for result in self.all_results:
+            for result in results:
                 writer.writerow({
                     'title': result.get('title', ''),
                     'relevance_score': f"{result.get('relevance_score', 0):.2f}",
                     'url': result.get('url', '')
                 })
 
-    def _export_to_json(self, file_path):
+    def _export_to_json(self, file_path, results):
         """Export results to JSON format"""
         import json
         
         with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(self.all_results, f, indent=2, ensure_ascii=False)
+            json.dump(results, f, indent=2, ensure_ascii=False)
 
-    def _export_to_txt(self, file_path):
+    def _export_to_txt(self, file_path, results):
         """Export results to plain text format"""
         with open(file_path, 'w', encoding='utf-8') as f:
-            for result in self.all_results:
+            for result in results:
                 f.write(f"Title: {result.get('title', '')}\n")
                 f.write(f"Relevance: {result.get('relevance_score', 0):.2f}\n")
                 f.write(f"URL: {result.get('url', '')}\n")
