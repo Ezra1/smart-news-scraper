@@ -1,14 +1,30 @@
-import pytest
 import asyncio
 import time
+import pytest
+
 from src.utils.rate_limiter import RateLimiter
 
-async def test_async_rate_limiting():
-    limiter = RateLimiter(requests_per_second=2)  # 2 requests per second
-    start_time = time.time()
-    
-    for _ in range(3):  # Should take at least 1 second
+
+def test_rate_limiter_requires_limit():
+    with pytest.raises(ValueError):
+        RateLimiter()
+
+
+def test_rate_limiter_sync_waits():
+    limiter = RateLimiter(requests_per_second=2)
+    start = time.monotonic()
+    for _ in range(3):
+        limiter.wait_if_needed()
+    duration = time.monotonic() - start
+    assert duration >= 1.0
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_async_waits():
+    limiter = RateLimiter(requests_per_second=2)
+    start = time.monotonic()
+    for _ in range(3):
         await limiter.wait_if_needed_async()
-    
-    duration = time.time() - start_time
-    assert duration >= 1.0, "Rate limiting not working as expected"
+    duration = time.monotonic() - start
+    assert duration >= 1.0
+
