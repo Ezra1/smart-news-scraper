@@ -1,3 +1,0 @@
-│   ├── config.template.json
-│   └── __pycache__
-│       └── insert_search_terms.cpython-312.pyc
