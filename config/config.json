@@ -1,7 +1,16 @@
 {
-    "RELEVANCE_THRESHOLD": 0.7,
-    "CHATGPT_CONTEXT_MESSAGE": {
-        "role": "system",
-        "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof. Analyze articles and rate their relevance to these topics from 0-1 where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
-    }
+  "NEWS_API_KEY": "your_news_api_key_here",
+  "OPENAI_API_KEY": "your_openai_api_key_here",
+  "NEWS_API_URL": "https://newsapi.org/v2/everything",
+  "NEWS_API_DAILY_LIMIT": 100,
+  "NEWS_API_REQUESTS_PER_SECOND": 1,
+  "RELEVANCE_THRESHOLD": 0.7,
+  "BATCH_SIZE": 100,
+  "DATABASE_PATH": "news_articles.db",
+  "LOGGING_LEVEL": "INFO",
+  "OUTPUT_DIR": "output",
+  "CHATGPT_CONTEXT_MESSAGE": {
+    "role": "system",
+    "content": "You are an expert in pharmaceutical security and supply chain integrity and all facets thereof. Analyze articles and rate their relevance to these topics from 0-1 where 1 is highly relevant, around 0.7 is moderately relevant, below 0.5 is less and less relevant, and 0 is not relevant at all."
+  }
 }

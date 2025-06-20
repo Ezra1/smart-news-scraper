@@ -38,8 +38,9 @@ A modern application for scraping, analyzing, and managing news articles based o
 
 3. Set up configuration:
    ```bash
-   # Create a config.json file in the project root with your API keys
-   # Example:
+   # Copy the template and add your API keys
+   cp config/config.template.json config/config.json
+   # Then edit config/config.json and enter your keys, e.g.:
    {
      "NEWS_API_KEY": "your_newsapi_key_here",
      "OPENAI_API_KEY": "your_openai_api_key_here",
@@ -93,7 +94,7 @@ The GUI provides:
 | LOGGING_LEVEL | Logging verbosity | INFO |
 | CHATGPT_CONTEXT_MESSAGE | System prompt for OpenAI | Custom relevance instructions |
 
-Configuration is stored in `config.json` in the project root. API keys are stored securely using encryption.
+Configuration is stored in `config/config.json`. API keys are stored securely using encryption.
 
 ## Architecture
 
@@ -158,7 +159,8 @@ smart-news-scraper/
 ├── smart_news_scraper.spec      # PyInstaller specification
 ├── migrate_db.py                # Database migration utility
 ├── search_terms.txt             # Default search terms
-├── config.json                  # Configuration file
+├── config/
+│   └── config.json              # Configuration file
 └── requirements.txt             # Dependencies
 ```
 
@@ -204,7 +206,7 @@ Double-click `SmartNewsScraper.exe` to launch the graphical interface.
 
 ## Troubleshooting
 
-- **API Rate Limits**: Adjust the rate limiting settings in config.json
+- **API Rate Limits**: Adjust the rate limiting settings in `config/config.json`
 - **Database Errors**: Check file permissions for the SQLite database
 - **OpenAI Errors**: Verify your API key and check OpenAI service status
 - **GUI Issues**: Ensure PyQt6 is properly installed

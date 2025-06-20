@@ -83,7 +83,7 @@ try:
             if not config_manager.validate():
                 logger.error("Configuration error: Missing API keys")
                 print("Configuration error: Missing API keys")
-                print("Please update your config.json file.")
+                print("Please update your config/config.json file.")
                 return
 
             db_path = input("Enter database file path (leave blank for default 'data/news_articles.db'): ").strip()
