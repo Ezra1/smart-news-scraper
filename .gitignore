@@ -25,6 +25,7 @@ config/config.json
 
 # Logs
 logs/
+!logs/.gitkeep
 *.log
 batch_processing.log
 news_scraper.log
@@ -36,11 +37,14 @@ data/*.sqlite3
 data/*.db-journal
 data/*.sqlite-journal
 data/*.sqlite3-journal
+news_articles.db
 
 # Output files
 output/
+!output/.gitkeep
 batch/input/*
 batch/output/*
+output.txt
 !batch/input/.gitkeep
 !batch/output/.gitkeep
 build/
