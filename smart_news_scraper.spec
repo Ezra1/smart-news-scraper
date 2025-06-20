@@ -17,7 +17,6 @@ a = Analysis(
         ('README.md', '.'),
         ('INSTALLATION.md', '.'),
         ('INSTALLER.md', '.'),
-        ('LICENSE', '.'),
         ('CHANGELOG.md', '.'),
         ('pharmaceutical_search_terms.txt', '.'),
         ('ai_context_prompt.txt', '.'),

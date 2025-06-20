@@ -170,7 +170,6 @@ smart-news-scraper/
 
 - `pharmaceutical_search_terms.txt` - Example OSINT keywords focused on pharmaceutical security
 - `ai_context_prompt.txt` - Default system prompt used for relevance analysis
-- `LICENSE` - MIT license for the project
 - `CHANGELOG.md` - Project release notes
 
 ## Development
@@ -207,6 +206,23 @@ This will:
 
 The resulting executable will be in `dist/SmartNewsScraper/`.
 Double-click `SmartNewsScraper.exe` to launch the graphical interface.
+
+### Distribution Contents
+
+The `dist/SmartNewsScraper` folder includes the executable along with an
+`_internal` directory that stores Python runtime files like
+`base_library.zip`. This file is required by the application and should
+remain in `_internal`.
+
+Documentation files are copied to the top level of the distribution so
+they are easy to find:
+
+- `README.md`
+- `requirements.txt`
+- `setup.py`
+- `CHANGELOG.md`
+- `pharmaceutical_search_terms.txt`
+- `ai_context_prompt.txt`
 
 ### Adding New Features
 
