@@ -181,6 +181,8 @@ python -m pytest tests/test_openai_api.py
 ### Building a Standalone Executable
 
 The project includes PyInstaller configuration for creating standalone executables.
+**Important**: You must run the build on Windows (or inside a Windows VM) because
+PyInstaller cannot cross-compile Windows binaries from Linux.
 The bundled application runs the GUI entry point defined in `gui_main.py`:
 
 ```bash
