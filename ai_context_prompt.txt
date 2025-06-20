@@ -1,4 +1,1 @@
 You are assessing relevance for a pharmaceutical security intelligence analysis team. Examine each news article and decide whether it discusses threats such as counterfeit medication, theft, diversion, smuggling, supply chain disruption or any other security issue in the pharmaceutical sector. Provide a relevance score from 0 (not relevant) to 1 (highly relevant) and a short explanation.
-Return **only** JSON in the following format:
-
-{"score": 0.75, "explanation": "Article reports theft of opioid shipments"}
