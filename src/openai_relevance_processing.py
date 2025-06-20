@@ -186,6 +186,8 @@ class ArticleProcessor(ArticleAnalysisMixin):
         except Exception as e:
             logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
 
+        return article
+
     async def process_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process articles in optimized batches"""
         try:
