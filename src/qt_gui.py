@@ -921,18 +921,17 @@ class NewsScraperGUI(QMainWindow):
             self._update_results(results)
             self._update_previews()
             
-            # Get the actual count of relevant articles from the database
-            relevant_count = 0
-            try:
-                query_result = self.db_manager.execute_query("SELECT COUNT(*) as count FROM relevant_articles")
-                if query_result:
-                    relevant_count = query_result[0]['count']
-            except Exception as e:
-                logger.error(f"Error getting relevant article count: {e}")
-            
-            # Use the database count for the success message
-            QMessageBox.information(self, "Success", f"Processed {result_count} articles successfully. Found {relevant_count} relevant articles.")
-            logger.info(f"Successfully processed {result_count} articles. Found {relevant_count} relevant articles.")
+            # Count only articles found relevant during this run
+            relevant_count = getattr(self.pipeline.processor, "relevant", len(results))
+
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Processed {result_count} articles successfully. Found {relevant_count} relevant articles."
+            )
+            logger.info(
+                f"Successfully processed {result_count} articles. Found {relevant_count} relevant articles."
+            )
         else:
             self._reset_phase_statuses()
             QMessageBox.warning(self, "Warning", "No articles were processed")
@@ -973,7 +972,7 @@ class NewsScraperGUI(QMainWindow):
                 logger.error(f"Error updating fetched count: {e}")
         
         # Rest of existing status update code
-        if "analyzing articles" in message_lower:
+        if "analyzing articles" in message_lower or message_lower.startswith("analyzed "):
             self._update_phase_status('analyze', "In Progress", 0)
             if "/" in message:  # Format: "Analyzed X/Y articles"
                 try:
@@ -983,7 +982,7 @@ class NewsScraperGUI(QMainWindow):
                 except Exception as e:
                     logger.error(f"Error parsing analysis progress: {e}")
         
-        elif "cleaning articles" in message_lower:
+        elif "cleaning articles" in message_lower or message_lower.startswith("cleaned "):
             if "/" in message:  # Format: "Cleaned X/Y articles"
                 try:
                     current, total = map(int, message.split()[-2].split("/"))
