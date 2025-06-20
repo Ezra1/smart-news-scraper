@@ -1116,6 +1116,18 @@ class NewsScraperGUI(QMainWindow):
         url = item.text(2)
         webbrowser.open(url)
 
+    def _add_result_item(self, result):
+        """Add a single result item to the results tree"""
+        try:
+            item = QTreeWidgetItem([
+                result.get('title', 'No title'),
+                f"{result.get('relevance_score', 0):.2f}",
+                result.get('url', 'No URL')
+            ])
+            self.results_tree.addTopLevelItem(item)
+        except Exception as e:
+            logger.error(f"Error adding result to tree: {e}")
+            
     def _filter_results(self):
         search_text = self.search_box.text().lower()
         relevance_idx = self.relevance_filter.currentIndex()
@@ -1208,16 +1220,7 @@ class NewsScraperGUI(QMainWindow):
 
         self.results_tree.clear()
         for result in valid_results:
-            try:
-                item = QTreeWidgetItem([
-                    result.get('title', 'No title'),
-                    f"{result.get('relevance_score', 0):.2f}",
-                    result.get('url', 'No URL')
-                ])
-                self.results_tree.addTopLevelItem(item)
-            except Exception as e:
-                logger.error(f"Error adding result to tree: {e}")
-                continue
+            self._add_result_item(result)
 
         self.statusBar().showMessage(f"Loaded {len(valid_results)} results")
 
