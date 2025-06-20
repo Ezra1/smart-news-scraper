@@ -186,7 +186,10 @@ class ArticleProcessor(ArticleAnalysisMixin):
         except Exception as e:
             logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
 
-        return article
+        # Only return the article if it meets the relevance threshold
+        if article.get("relevance_score", 0) >= self.RELEVANCE_THRESHOLD:
+            return article
+        return None
 
     async def process_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process articles in optimized batches"""
