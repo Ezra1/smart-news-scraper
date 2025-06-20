@@ -20,6 +20,8 @@ ENV/
 config/.api_keys
 config/.api_keys.*
 !.api_keys.example
+.api_keys*
+config/config.json
 
 # Logs
 logs/
@@ -41,6 +43,8 @@ batch/input/*
 batch/output/*
 !batch/input/.gitkeep
 !batch/output/.gitkeep
+build/
+dist/
 
 # IDE specific files
 .idea/

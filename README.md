@@ -94,7 +94,9 @@ The GUI provides:
 | LOGGING_LEVEL | Logging verbosity | INFO |
 | CHATGPT_CONTEXT_MESSAGE | System prompt for OpenAI | Custom relevance instructions |
 
-Configuration is stored in `config/config.json`. API keys are stored securely using encryption.
+Configuration is stored in `config/config.json` (create this file by copying
+`config/config.template.json` and updating your keys). API keys are stored
+securely using encryption.
 
 ## Architecture
 
@@ -160,7 +162,7 @@ smart-news-scraper/
 ├── migrate_db.py                # Database migration utility
 ├── search_terms.txt             # Default search terms
 ├── config/
-│   └── config.json              # Configuration file
+│   └── config.template.json     # Copy to config.json and add your keys
 └── requirements.txt             # Dependencies
 ```
 
