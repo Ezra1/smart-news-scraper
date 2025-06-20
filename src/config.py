@@ -1,6 +1,9 @@
 import base64
 import os
 import json
+import platform
+import uuid
+import hashlib
 from pathlib import Path
 from typing import Dict, Any
 from cryptography.fernet import Fernet
@@ -56,17 +59,22 @@ class ConfigManager:
             return key_file.read_bytes()
         
         # Generate new key with random salt
-        import os
-        import getpass
-        import hashlib
-        
+
         # Generate a random salt
         salt = os.urandom(16)
         salt_file.write_bytes(salt)
-        
+
         # Use machine-specific information as a base for the password
         # This isn't perfect security but better than a hardcoded password
-        machine_id = hashlib.md5(os.uname().nodename.encode()).hexdigest()
+        try:
+            nodename = os.uname().nodename
+        except AttributeError:
+            nodename = platform.node()
+
+        if not nodename:
+            nodename = hex(uuid.getnode())
+
+        machine_id = hashlib.md5(nodename.encode()).hexdigest()
         
         # Derive key using PBKDF2
         kdf = PBKDF2HMAC(
