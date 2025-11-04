@@ -17,7 +17,7 @@ logger = setup_logging(__name__)
 DEFAULT_CONFIG = {
     "NEWS_API_KEY": "",
     "OPENAI_API_KEY": "",
-    "NEWS_API_URL": "https://newsapi.org/v2/everything",
+    "NEWS_API_URL": "https://api.thenewsapi.com/v1/news/all",
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
     "OPENAI_REQUESTS_PER_MINUTE": 60,  # Add missing OpenAI rate limit

@@ -6,28 +6,27 @@ from src.logger_config import setup_logging
 logger = setup_logging(__name__)
 
 async def validate_news_api_key(api_key: str) -> bool:
-    """Validate News API key with a test request."""
-    url = "https://newsapi.org/v2/everything"
+    """Validate The News API token with a test request."""
+    url = "https://api.thenewsapi.com/v1/news/top"
     params = {
-        "q": "test",
-        "pageSize": 1,
-        "apiKey": api_key
+        "limit": 1,
+        "api_token": api_key,
     }
     
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params) as response:
                 if response.status == 200:
-                    logger.info("News API key validated successfully")
+                    logger.info("The News API token validated successfully")
                     return True
                 elif response.status == 401:
-                    logger.error("Invalid News API key")
+                    logger.error("Invalid The News API token")
                     return False
                 else:
-                    logger.error(f"News API validation failed with status {response.status}")
+                    logger.error(f"The News API validation failed with status {response.status}")
                     return False
     except Exception as e:
-        logger.error(f"News API validation error: {e}")
+        logger.error(f"The News API validation error: {e}")
         return False
 
 def validate_openai_api_key(api_key: str) -> bool:

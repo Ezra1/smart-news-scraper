@@ -18,7 +18,7 @@ from src.utils.rate_limiter import RateLimiter
 class NewsArticleScraper:
     """
     A class to handle asynchronous news article fetching with error handling.
-    Interfaces with NewsAPI to fetch articles based on search terms.
+    Interfaces with The News API to fetch articles based on search terms.
     """
     
     def __init__(self, config_manager: ConfigManager):
@@ -60,22 +60,35 @@ class NewsArticleScraper:
             try:
                 # Fetch raw articles for the term
                 raw_articles = await self._fetch_for_term(term)
-                
+
                 if self.rate_limited:
                     break
-                    
+
                 # Process and store articles
                 for article in raw_articles:
+                    combined_content = article.get("content") or article.get("description", "")
+                    if not combined_content:
+                        snippet = article.get("snippet")
+                        if snippet:
+                            combined_content = snippet
+                    if article.get("description") and article.get("snippet"):
+                        combined_content = f"{article.get('description')}\n\n{article.get('snippet')}"
+                    if not combined_content:
+                        combined_content = article.get("title", "")
                     article_data = {
                         "title": article.get("title"),
-                        "content": article.get("content") or article.get("description", ""),
+                        "content": combined_content,
+                        "description": article.get("description"),
+                        "snippet": article.get("snippet"),
                         "source": article.get("source", {}),
                         "url": article.get("url"),
                         "url_to_image": article.get("urlToImage"),
-                        "published_at": article.get("publishedAt"),
+                        "image_url": article.get("image_url"),
+                        "published_at": article.get("published_at"),
+                        "publishedAt": article.get("publishedAt"),
                         "search_term_id": search_term_map.get(term)
                     }
-                    
+
                     article_id = self.article_manager.insert_article(article_data)
                     if article_id:
                         article_data["id"] = article_id
@@ -87,6 +100,7 @@ class NewsArticleScraper:
                 logger.error(f"Error processing articles for term '{term}': {str(e)}")
                 
         return all_articles
+
     
     async def _fetch_for_term(self, term: str) -> List[Dict]:
         """
@@ -103,24 +117,21 @@ class NewsArticleScraper:
         try:
             await self._wait_for_rate_limit()
             
+            now_utc = datetime.utcnow()
+            thirty_days_ago = now_utc - timedelta(days=30)
+
             params = {
-                "q": term,
-                "apiKey": self.api_key,
-                "sortBy": "relevancy",
-                "pageSize": 100,
-                "from": (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d"),
-                "to": datetime.now().strftime("%Y-%m-%d"),
-                "searchIn": "title,description,content"
+                "search": term,
+                "api_token": self.api_key,
+                "limit": 50,
+                "language": "en",
+                "search_fields": "title,description,keywords,main_text",
+                "published_after": thirty_days_ago.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "published_before": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
             }
-            
-            # Try without language restriction first
+
             articles = await self._make_api_request(params)
-            
-            if not articles:
-                logger.info(f"No results found for '{term}', retrying with English language filter")
-                params["language"] = "en"
-                articles = await self._make_api_request(params)
-            
+
             logger.info(f"Found {len(articles)} articles for term: {term}")
             return articles
             
@@ -129,16 +140,26 @@ class NewsArticleScraper:
             return []
 
     async def _make_api_request(self, params: dict) -> List[dict]:
-        """Make request to NewsAPI with error handling."""
+        """Make request to The News API with error handling."""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(self.api_url, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
-                        return data.get("articles", [])
+                        articles = data.get("data", [])
+                        if isinstance(articles, dict):
+                            flattened: List[Dict[str, Any]] = []
+                            for value in articles.values():
+                                if isinstance(value, list):
+                                    flattened.extend(value)
+                            return flattened
+                        return articles or []
                     elif response.status == 429:
                         logger.warning("Rate limit exceeded")
                         self.rate_limited = True
+                        return []
+                    elif response.status == 401:
+                        logger.error("Invalid The News API token")
                         return []
                     else:
                         response_text = await response.text()

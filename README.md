@@ -4,7 +4,7 @@ A modern application for scraping, analyzing, and managing news articles based o
 
 ## Features
 
-- 📰 **Article Scraping**: Automatically fetch news articles using the NewsAPI
+- 📰 **Article Scraping**: Automatically fetch news articles using The News API
 - 🤖 **AI-Powered Analysis**: Evaluate article relevance using OpenAI's API
 - 🔍 **Custom Search Terms**: Manage and organize your search terms
 - 📊 **Visual Progress Tracking**: Real-time processing status and progress indicators
@@ -20,7 +20,7 @@ A modern application for scraping, analyzing, and managing news articles based o
 ### Prerequisites
 
 - Python 3.8+
-- NewsAPI key (get one at [newsapi.org](https://newsapi.org/))
+- The News API token (get one at [thenewsapi.com](https://www.thenewsapi.com/))
 - OpenAI API key (get one at [openai.com](https://platform.openai.com/))
 
 ### Installation
@@ -42,7 +42,7 @@ A modern application for scraping, analyzing, and managing news articles based o
    cp config/config.template.json config/config.json
    # Then edit config/config.json and enter your keys, e.g.:
    {
-     "NEWS_API_KEY": "your_newsapi_key_here",
+     "NEWS_API_KEY": "your_thenewsapi_token_here",
      "OPENAI_API_KEY": "your_openai_api_key_here",
      "RELEVANCE_THRESHOLD": 0.7
    }
@@ -84,10 +84,10 @@ The GUI provides:
 | Setting | Description | Default |
 |---------|-------------|---------|
 | RELEVANCE_THRESHOLD | Minimum relevance score for articles | 0.7 |
-| NEWS_API_KEY | Your NewsAPI authentication key | None |
+| NEWS_API_KEY | Your The News API token | None |
 | OPENAI_API_KEY | Your OpenAI API key for analysis | None |
-| NEWS_API_URL | NewsAPI endpoint URL | https://newsapi.org/v2/everything |
-| NEWS_API_REQUESTS_PER_SECOND | Rate limit for NewsAPI | 1 |
+| NEWS_API_URL | The News API endpoint URL | https://api.thenewsapi.com/v1/news/all |
+| NEWS_API_REQUESTS_PER_SECOND | Rate limit for The News API | 1 |
 | OPENAI_REQUESTS_PER_MINUTE | Rate limit for OpenAI API | 60 |
 | BATCH_SIZE | Number of articles to process in parallel | 100 |
 | DATABASE_PATH | Path to SQLite database | news_articles.db |
@@ -105,7 +105,7 @@ securely using encryption.
 - **DatabaseManager**: Handles SQLite database operations with connection pooling
 - **ArticleManager**: Manages article storage and retrieval
 - **SearchTermManager**: Handles search term operations
-- **NewsArticleScraper**: Fetches articles from NewsAPI with rate limiting
+- **NewsArticleScraper**: Fetches articles from The News API with rate limiting
 - **ArticleProcessor**: Processes articles using OpenAI for relevance scoring
 - **ArticleValidator**: Cleans and validates article content
 - **PipelineManager**: Orchestrates the entire processing workflow
@@ -117,7 +117,7 @@ securely using encryption.
 
 1. **Search Terms** → Load from file or database
 2. **PipelineManager** → Coordinates the processing workflow
-3. **NewsArticleScraper** → Fetch articles from NewsAPI
+3. **NewsArticleScraper** → Fetch articles from The News API
 4. **ArticleValidator** → Clean and validate article content
 5. **ArticleManager** → Store raw articles in database
 6. **ArticleProcessor** → Process articles with OpenAI
@@ -141,7 +141,7 @@ smart-news-scraper/
 │   ├── insert_processed_articles.py # Relevance filtering
 │   ├── insert_search_terms.py   # Search term management
 │   ├── logger_config.py         # Logging configuration
-│   ├── news_scraper.py          # News API integration
+│   ├── news_scraper.py          # The News API integration
 │   ├── openai_client.py         # OpenAI client
 │   ├── openai_relevance_processing.py # OpenAI processing
 │   ├── pipeline_manager.py      # Processing pipeline
@@ -249,7 +249,7 @@ they are easy to find:
 ## Acknowledgments
 
 - Powered by [OpenAI](https://openai.com/) for article analysis
-- News data provided by [NewsAPI](https://newsapi.org/)
+- News data provided by [The News API](https://www.thenewsapi.com/)
 - GUI built with [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
 - SQLite for efficient data storage
 - Python's asyncio for concurrent processing
