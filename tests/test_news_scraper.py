@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from contextlib import asynccontextmanager
 
@@ -30,6 +31,7 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, response):
         self.response = response
+        self.last_params = None
 
     async def __aenter__(self):
         return self
@@ -38,6 +40,7 @@ class FakeSession:
         pass
 
     def get(self, *args, **kwargs):
+        self.last_params = kwargs.get("params")
         @asynccontextmanager
         async def cm():
             yield self.response
@@ -49,21 +52,19 @@ def scraper():
     return NewsArticleScraper(MockConfig())
 
 
-@pytest.mark.asyncio
-async def test_make_api_request_success(monkeypatch, scraper):
-    response = FakeResponse(200, {"articles": [{"title": "A"}]})
+def test_make_api_request_success(monkeypatch, scraper):
+    response = FakeResponse(200, {"data": [{"title": "A"}]})
 
     def client_session(*args, **kwargs):
         return FakeSession(response)
 
     monkeypatch.setattr("aiohttp.ClientSession", client_session)
 
-    articles = await scraper._make_api_request({})
+    articles = asyncio.run(scraper._make_api_request({}))
     assert articles == [{"title": "A"}]
 
 
-@pytest.mark.asyncio
-async def test_make_api_request_rate_limit(monkeypatch, scraper):
+def test_make_api_request_rate_limit(monkeypatch, scraper):
     response = FakeResponse(429)
 
     def client_session(*args, **kwargs):
@@ -71,23 +72,24 @@ async def test_make_api_request_rate_limit(monkeypatch, scraper):
 
     monkeypatch.setattr("aiohttp.ClientSession", client_session)
 
-    articles = await scraper._make_api_request({})
+    articles = asyncio.run(scraper._make_api_request({}))
     assert articles == []
     assert scraper.rate_limited
 
 
-@pytest.mark.asyncio
-async def test_fetch_for_term_retry(monkeypatch, scraper):
-    first = FakeResponse(200, {"articles": []})
-    second = FakeResponse(200, {"articles": [{"title": "B"}]})
-    responses = [first, second]
+def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
+    response = FakeResponse(200, {"data": {"general": [{"title": "B"}]}})
+    sessions = []
 
     def client_session(*args, **kwargs):
-        resp = responses.pop(0)
-        return FakeSession(resp)
+        session = FakeSession(response)
+        sessions.append(session)
+        return session
 
     monkeypatch.setattr("aiohttp.ClientSession", client_session)
 
-    results = await scraper._fetch_for_term("term")
+    results = asyncio.run(scraper._fetch_for_term("term"))
     assert results == [{"title": "B"}]
+    assert sessions[0].last_params["search"] == "term"
+    assert sessions[0].last_params["api_token"] == "api-key"
 

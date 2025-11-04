@@ -19,12 +19,15 @@ def test_rate_limiter_sync_waits():
     assert duration >= 1.0
 
 
-@pytest.mark.asyncio
-async def test_rate_limiter_async_waits():
+def test_rate_limiter_async_waits():
     limiter = RateLimiter(requests_per_second=2)
     start = time.monotonic()
-    for _ in range(3):
-        await limiter.wait_if_needed_async()
+
+    async def run_waits():
+        for _ in range(3):
+            await limiter.wait_if_needed_async()
+
+    asyncio.run(run_waits())
     duration = time.monotonic() - start
     assert duration >= 1.0
 

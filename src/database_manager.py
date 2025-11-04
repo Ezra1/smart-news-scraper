@@ -213,11 +213,23 @@ class ArticleManager:
             # Extract and normalize data with defaults for optional fields
             data = {
                 'title': article_data.get('title', ''),
-                'content': article_data.get('content', '') or article_data.get('description', ''),
+                'content': (
+                    article_data.get('content', '')
+                    or article_data.get('description', '')
+                    or article_data.get('snippet', '')
+                ),
                 'url': article_data.get('url', ''),
                 'search_term_id': search_term_id or article_data.get('search_term_id'),
-                'published_at': article_data.get('published_at', '') or article_data.get('publishedAt', ''),
-                'url_to_image': article_data.get('url_to_image', '') or article_data.get('urlToImage', '')
+                'published_at': (
+                    article_data.get('published_at', '')
+                    or article_data.get('publishedAt', '')
+                    or article_data.get('published_on', '')
+                ),
+                'url_to_image': (
+                    article_data.get('url_to_image', '')
+                    or article_data.get('image_url', '')
+                    or article_data.get('urlToImage', '')
+                )
             }
             
             # Process source field
