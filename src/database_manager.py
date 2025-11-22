@@ -1,7 +1,9 @@
 """src/database.py: Handles all database operations using SQLite with enhanced transaction safety"""
 
 import os
+import sys
 import sqlite3
+from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -28,11 +30,28 @@ class DatabaseManager:
     def __init__(self, db_path: str = "news_articles.db"):
         if self._initialized:
             return
-            
-        self.db_path = db_path
+
+        self.db_path = self._resolve_db_path(db_path)
         self._initialized = True
         self._populate_pool()
         self._create_tables()  # Add this line
+
+    def _resolve_db_path(self, db_path: str) -> str:
+        """Resolve the database path and ensure its parent directory exists.
+
+        For frozen (PyInstaller) builds, paths should be anchored to the bundle
+        directory instead of the user's current working directory to avoid
+        missing folders when the executable runs from arbitrary locations.
+        """
+
+        path = Path(db_path)
+
+        if not path.is_absolute():
+            base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+            path = (base_path / path).resolve()
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path)
 
     def _populate_pool(self):
         """Initialize connection pool"""
