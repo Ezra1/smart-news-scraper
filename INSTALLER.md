@@ -79,6 +79,17 @@ If you encounter errors during the PyInstaller build:
 2. Check the PyInstaller output for specific errors
 3. Try running PyInstaller directly: `pyinstaller --clean smart_news_scraper.spec`
 
+### Installer size is unexpectedly large
+
+Excessively large installers (multiple GB) are usually caused by bundling development artifacts or unused Qt WebEngine components. To reduce the footprint:
+
+1. Ensure you are not building from inside a virtual environment folder and that directories such as `venv/`, `.git/`, `build/`, and `__pycache__/` are excluded from the package inputs.
+2. Start from a clean workspace before running PyInstaller:
+   - Linux/macOS: `rm -rf build dist`  
+   - Windows: delete the `build` and `dist` folders in the project root
+3. The PyInstaller spec excludes Qt WebEngine modules by default. If you customized the spec, re-run with `--clean` to regenerate a trimmed build: `pyinstaller --clean smart_news_scraper.spec`.
+4. Inspect the generated `dist/SmartNewsScraper` folder and remove unnecessary extras (e.g., old log/output dumps) before packaging.
+
 ### MSI Build Errors
 
 If you encounter errors during the MSI build:
