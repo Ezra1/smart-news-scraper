@@ -150,6 +150,9 @@ class ArticleProcessor(ArticleAnalysisMixin):
                     logger.info(f"Processing article - ID: {raw_article_id}, URL: {url}, Score: {relevance_score}")
                     logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
 
+                    # Persist the score on the article for downstream consumers
+                    article["relevance_score"] = relevance_score
+
                     # Process and store relevant articles
                     if relevance_score >= self.RELEVANCE_THRESHOLD:
                         logger.info(f"Article with ID '{raw_article_id}' is relevant (score: {relevance_score})")
