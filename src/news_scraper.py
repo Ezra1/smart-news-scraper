@@ -1,7 +1,7 @@
 import aiohttp
 import asyncio
 from typing import List, Dict, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -117,7 +117,7 @@ class NewsArticleScraper:
         try:
             await self._wait_for_rate_limit()
             
-            now_utc = datetime.utcnow()
+            now_utc = datetime.now(timezone.utc)
             thirty_days_ago = now_utc - timedelta(days=30)
 
             params = {

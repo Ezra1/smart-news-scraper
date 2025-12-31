@@ -10,6 +10,13 @@ def test_rate_limiter_requires_limit():
         RateLimiter()
 
 
+def test_rate_limiter_location():
+    from src.utils.rate_limiter import RateLimiter  # canonical import
+
+    assert hasattr(RateLimiter, "wait_if_needed")
+    assert hasattr(RateLimiter, "wait_if_needed_async")
+
+
 def test_rate_limiter_sync_waits():
     limiter = RateLimiter(requests_per_second=2)
     start = time.monotonic()

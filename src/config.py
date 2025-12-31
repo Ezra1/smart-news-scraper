@@ -5,7 +5,7 @@ import platform
 import uuid
 import hashlib
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
     "OPENAI_REQUESTS_PER_MINUTE": 60,
-    "RELEVANCE_THRESHOLD": 0.6,
+    "RELEVANCE_THRESHOLD": 0.7,
     "BATCH_SIZE": 100,
     "DATABASE_PATH": "data/news_articles.db",
     "LOGGING_LEVEL": "INFO",
@@ -38,6 +38,60 @@ DEFAULT_CONFIG = {
         )
     }
 }
+
+EXPECTED_API_URL = "https://api.thenewsapi.com/v1/news/all"
+EXPECTED_DB_PATH = "data/news_articles.db"
+EXPECTED_THRESHOLD = 0.7
+
+
+def _first_non_null(config: Dict[str, Any], *keys: str) -> Any:
+    """Return the first key in config with a non-None value."""
+    for key in keys:
+        if key in config and config[key] is not None:
+            return config[key]
+    return None
+
+
+def validate_config(config: Dict[str, Any]) -> List[str]:
+    """Return list of warnings if config diverges from expected defaults."""
+    warnings: List[str] = []
+
+    api_url = _first_non_null(config, "NEWS_API_URL", "api_base_url")
+    if not api_url:
+        warnings.append("Missing API base URL")
+    elif api_url != EXPECTED_API_URL:
+        warnings.append("Non-standard API base URL")
+
+    db_path = _first_non_null(config, "DATABASE_PATH", "database_path")
+    if db_path and db_path != EXPECTED_DB_PATH:
+        warnings.append("Non-standard database path")
+    elif not db_path:
+        warnings.append("Missing database path")
+
+    threshold = _first_non_null(config, "RELEVANCE_THRESHOLD", "relevance_threshold")
+    try:
+        if threshold is None:
+            warnings.append("Missing relevance threshold")
+        else:
+            threshold_val = float(threshold)
+            if not 0 <= threshold_val <= 1:
+                warnings.append("Relevance threshold should be between 0 and 1")
+            elif threshold_val < EXPECTED_THRESHOLD:
+                warnings.append("Relevance threshold below recommended 0.7")
+    except (TypeError, ValueError):
+        warnings.append("Relevance threshold is not a number")
+
+    rate_limit = _first_non_null(
+        config, "rate_limit_requests_per_minute", "OPENAI_REQUESTS_PER_MINUTE"
+    )
+    if rate_limit is not None:
+        try:
+            if int(rate_limit) != 30:
+                warnings.append("Rate limit differs from recommended 30 req/min")
+        except (TypeError, ValueError):
+            warnings.append("Rate limit should be an integer")
+
+    return warnings
 
 class ConfigManager:
     def __init__(self):
@@ -166,8 +220,70 @@ class ConfigManager:
         for key, value in DEFAULT_CONFIG.items():
             if key not in config:
                 config[key] = value
-        
+
+        # Warn if user config diverges from the template defaults
+        self._warn_if_diverged(config)
+
         return config
+
+    def _load_template_defaults(self) -> Dict[str, Any]:
+        """Load template values for comparison; safe no-op if missing/invalid."""
+        try:
+            template_path = Path(self.config_path).with_name("config.template.json")
+            if not template_path.exists():
+                return {}
+            with open(template_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not read config template for comparison: {e}")
+            return {}
+
+    def _is_simplified_template(self, template: Dict[str, Any]) -> bool:
+        """
+        Detect the simplified template schema used for onboarding documentation.
+        """
+        expected_keys = {
+            "api_base_url",
+            "api_key_env_var",
+            "database_path",
+            "relevance_threshold",
+            "rate_limit_requests_per_minute",
+        }
+        return set(template.keys()).issubset(expected_keys)
+
+    def _warn_if_diverged(self, config: Dict[str, Any]) -> None:
+        """
+        Warn at startup if the active config differs from the template defaults.
+        API keys are excluded from comparison.
+        """
+        template = self._load_template_defaults()
+        if not template:
+            return
+
+        if self._is_simplified_template(template):
+            return
+
+        ignore_keys = {"NEWS_API_KEY", "OPENAI_API_KEY"}
+        diffs = []
+
+        for key, template_value in template.items():
+            if key in ignore_keys:
+                continue
+            if key not in config:
+                diffs.append(f"{key}=<missing> (template: {template_value!r})")
+            else:
+                if config[key] != template_value:
+                    diffs.append(f"{key}={config[key]!r} (template: {template_value!r})")
+
+        extra_keys = [k for k in config.keys() if k not in template and k not in ignore_keys]
+        if extra_keys:
+            diffs.append(f"extra keys present: {', '.join(sorted(extra_keys))}")
+
+        if diffs:
+            logger.warning(
+                "Active config differs from config.template.json: %s",
+                "; ".join(diffs),
+            )
 
     def save_config(self, config: Dict[str, Any]) -> None:
         """Save configuration with secure API key handling"""

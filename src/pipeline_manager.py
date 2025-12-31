@@ -1,4 +1,4 @@
-from typing import List, Callable
+from typing import List, Callable, Optional
 from src.news_scraper import NewsArticleScraper
 from src.openai_relevance_processing import ArticleProcessor
 from src.article_validator import ArticleValidator
@@ -26,22 +26,33 @@ class PipelineManager:
         processor (ArticleProcessor): Processes articles for relevance
         validator (ArticleValidator): Validates and cleans article data
     """
-    def __init__(self, db_manager: DatabaseManager, config_manager: ConfigManager):
+    def __init__(
+        self,
+        db_manager: Optional[DatabaseManager] = None,
+        config_manager: Optional[ConfigManager] = None,
+        scraper: Optional[NewsArticleScraper] = None,
+        validator: Optional[ArticleValidator] = None,
+    ):
         """
         Initialize the PipelineManager with database and configuration managers.
 
         Args:
             db_manager (DatabaseManager): Instance of database manager for data operations
             config_manager (ConfigManager): Instance of config manager for settings
+            scraper (NewsArticleScraper, optional): Custom scraper for testing/overrides
+            validator (ArticleValidator, optional): Custom validator for testing/overrides
         """
-        self.db_manager = db_manager
-        self.config_manager = config_manager
-        self.context_message = config_manager.get("CHATGPT_CONTEXT_MESSAGE")
-        self.progress_callback = None
-        self.status_callback = None
-        self.scraper = NewsArticleScraper(config_manager)
+        self.db_manager = db_manager or DatabaseManager()
+        self.config_manager = config_manager or ConfigManager()
+        self.context_message = self.config_manager.get("CHATGPT_CONTEXT_MESSAGE")
+        # Default to no-op callbacks so headless/CLI usage does not raise
+        self.progress_callback = lambda current, total: None
+        self.status_callback = (
+            lambda message, error=False, rate_limited=False, done=False: None
+        )
+        self.scraper = scraper or NewsArticleScraper(self.config_manager)
         self.processor = None
-        self.validator = ArticleValidator()
+        self.validator = validator or ArticleValidator()
 
     def set_callbacks(self, progress_callback: Callable[[int, int], None],
                      status_callback: Callable[[str, bool, bool, bool], None]):
@@ -54,8 +65,8 @@ class PipelineManager:
             status_callback (Callable[[str, bool, bool, bool], None]): Function to report status
                 Takes message string and three boolean flags for error, rate_limited, and done states
         """
-        self.progress_callback = progress_callback
-        self.status_callback = status_callback
+        self.progress_callback = progress_callback or self.progress_callback
+        self.status_callback = status_callback or self.status_callback
 
     def set_context_message(self, context_message: dict):
         """

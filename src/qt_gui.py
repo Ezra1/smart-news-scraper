@@ -1,3 +1,18 @@
+"""PyQt6 desktop interface for the Smart News Scraper.
+
+The GUI lets users configure API keys, manage search terms, launch the end-to-end
+scraping pipeline, and review/export relevance-scored articles. Launch from the
+repository root with:
+
+    python -m src.qt_gui
+
+Key elements:
+- Configuration tab for API keys, relevance thresholds, and ChatGPT context
+- Search Terms tab for CRUD and file import/export
+- Processing tab to run the pipeline with live progress
+- Results tab to filter, inspect, and export processed articles
+"""
+
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QPushButton, QLabel, QVBoxLayout,
     QHBoxLayout, QTabWidget, QLineEdit, QFrame, QListWidget, QProgressBar,
@@ -19,6 +34,8 @@ from src.openai_relevance_processing import ArticleProcessor
 from src.article_validator import ArticleValidator
 from src.pipeline_manager import PipelineManager
 from src.api_validator import validate_news_api_key, validate_openai_api_key
+from src.gui.status_parser import StatusParser, StatusUpdate
+from src.gui.processing_state import ProcessingState
 
 logger = setup_logging(__name__)
 
@@ -76,6 +93,12 @@ class ProcessingWorker(QThread):
 
 class NewsScraperGUI(QMainWindow):
     def __init__(self):
+        """Initialize the main window, services, and processing pipeline.
+
+        Sets up validators, config/database managers, search/article managers,
+        the processing queue, and GUI scaffolding. Processor creation is deferred
+        until configuration is validated to avoid stale API keys.
+        """
         super().__init__()
         self.setWindowTitle("Smart News Scraper")
         self.setMinimumSize(1200, 800)
@@ -92,6 +115,8 @@ class NewsScraperGUI(QMainWindow):
         
         # Initialize pipeline without processor
         self.pipeline = PipelineManager(self.db_manager, self.config_manager)
+        self.status_parser = StatusParser()
+        self.state = ProcessingState()
         
         # Defer processor initialization until needed
         self.processor = None
@@ -101,6 +126,7 @@ class NewsScraperGUI(QMainWindow):
         self._setup_styles()
 
     def _setup_ui(self):
+        """Build the tabbed interface and base widgets."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
@@ -856,7 +882,11 @@ class NewsScraperGUI(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to export search terms: {e}")
 
     def _start_processing(self):
-        """Start complete processing workflow"""
+        """Validate configuration and start the end-to-end pipeline.
+
+        Ensures API keys are present, resets UI counters, wires callbacks, and
+        launches a ProcessingWorker to run fetch/clean/analyze steps.
+        """
         try:
             # Validate configuration first
             if not self.config_manager.validate():
@@ -904,7 +934,11 @@ class NewsScraperGUI(QMainWindow):
             return
 
     def _handle_processing_complete(self, results):
-        """Handle completion of processing with proper UI updates"""
+        """Finalize UI state after the worker completes.
+
+        Args:
+            results: List of processed article dicts returned by the pipeline.
+        """
         result_count = len(results) if results else 0
         logger.info(f"Processing completed with {result_count} results")
         self.start_btn.setEnabled(True)
@@ -955,78 +989,88 @@ class NewsScraperGUI(QMainWindow):
             self.progress_counter.setText(f"{current}/{total} articles processed")
 
     def _update_status(self, message, is_error, is_warning, is_success):
-        """Enhanced status updates with phase tracking"""
-        logger.info(f"Status update: {message}")
-        self.status_label.setText(message)
-        self.statusBar().showMessage(message)
-        
-        message_lower = message.lower()
-        
-        # Update fetched count from status messages
-        if "articles found)" in message:
-            try:
-                # Extract count from message like: "Processing term X/Y: term (Z articles found)"
-                count = int(message.split("(")[1].split(" ")[0])
-                self._update_fetched_count(count)
-            except Exception as e:
-                logger.error(f"Error updating fetched count: {e}")
-        
-        # Rest of existing status update code
-        if "analyzing articles" in message_lower or message_lower.startswith("analyzed "):
+        """Update status labels and phase progress based on worker callbacks.
+
+        Args:
+            message: Human-readable status text from the pipeline.
+            is_error: True when the pipeline reported an error.
+            is_warning: True when the pipeline reported a non-fatal warning.
+            is_success: True when a step completed successfully.
+        """
+        status = self.status_parser.parse(
+            message,
+            is_error=is_error,
+            is_warning=is_warning,
+            is_success=is_success,
+        )
+        self.state.update_from_status(status)
+        self._render_status(status)
+
+    def _render_status(self, status: StatusUpdate):
+        """Render parsed status into the UI (icons, labels, progress)."""
+        logger.info(f"Status update: {status.message}")
+        self.status_label.setText(status.message)
+        self.statusBar().showMessage(status.message)
+
+        if status.counts.fetched is not None:
+            self._update_fetched_count(status.counts.fetched)
+
+        if status.analysis_started:
             self._update_phase_status('analyze', "In Progress", 0)
-            if "/" in message:  # Format: "Analyzed X/Y articles"
-                try:
-                    current, total = map(int, message.split()[-2].split("/"))
-                    progress = (current / total * 100) if total > 0 else 0
-                    self._update_phase_status('analyze', f"Analyzing: {current}/{total}", progress)
-                except Exception as e:
-                    logger.error(f"Error parsing analysis progress: {e}")
-        
-        elif "cleaning articles" in message_lower or message_lower.startswith("cleaned "):
-            if "/" in message:  # Format: "Cleaned X/Y articles"
-                try:
-                    current, total = map(int, message.split()[-2].split("/"))
-                    progress = (current / total * 100) if total > 0 else 0
-                    self._update_phase_status('clean', f"Cleaning: {current}/{total}", progress)
-                except Exception as e:
-                    logger.error(f"Error parsing cleaning progress: {e}")
+        if status.analysis_progress:
+            current = status.analysis_progress.current
+            total = status.analysis_progress.total
+            progress = (current / total * 100) if total > 0 else 0
+            self._update_phase_status('analyze', f"Analyzing: {current}/{total}", progress)
+
+        if status.cleaning_started:
+            if status.cleaning_progress:
+                current = status.cleaning_progress.current
+                total = status.cleaning_progress.total
+                progress = (current / total * 100) if total > 0 else 0
+                self._update_phase_status('clean', f"Cleaning: {current}/{total}", progress)
             else:
                 self._update_phase_status('clean', "Cleaning", 0)
-        
-        elif "Processing term" in message:
-            try:
-                # Extract term progress
-                progress_part = message.split(":")[0]
-                current, total = map(int, progress_part.split()[-1].split("/"))
-                self._update_phase_status('fetch', f"Fetching: {current}/{total}", (current / total) * 100)
-            except Exception as e:
-                logger.error(f"Error parsing fetch progress: {e}")
 
-        # Phase completion handling
-        if "completed fetch" in message_lower and "rate limit" not in message_lower:
+        if status.term_progress:
+            current = status.term_progress.current
+            total = status.term_progress.total
+            progress = (current / total * 100) if total > 0 else 0
+            self._update_phase_status('fetch', f"Fetching: {current}/{total}", progress)
+
+        if status.fetch_complete and not status.rate_limited:
             self._update_phase_status('fetch', "Complete", 100, is_complete=True)
-        elif "completed cleaning" in message_lower:
-            self._update_phase_status('clean', "Complete", 100, is_complete=True)
-        elif "completed analysis" in message_lower:
-            self._update_phase_status('analyze', "Complete", 100, is_complete=True)
-        elif "Rate limit reached" in message:
+        elif status.rate_limited:
             self._update_phase_status('fetch', "Rate Limited", 100, is_complete=True)
 
-        # Handle error and warning states
-        if is_error:
-            logger.error(f"Process error: {message}")
+        if status.cleaning_complete:
+            self._update_phase_status('clean', "Complete", 100, is_complete=True)
+
+        if status.analysis_complete:
+            self._update_phase_status('analyze', "Complete", 100, is_complete=True)
+
+        if status.is_error:
+            logger.error(f"Process error: {status.message}")
             self.status_icon.setText("❌")
-        elif is_warning:
-            logger.warning(f"Process warning: {message}")
+        elif status.is_warning:
+            logger.warning(f"Process warning: {status.message}")
             self.status_icon.setText("⚠️")
-        elif is_success:
-            logger.info(f"Process success: {message}")
+        elif status.is_success:
+            logger.info(f"Process success: {status.message}")
             self.status_icon.setText("✅")
         else:
             self.status_icon.setText("🔄")
 
     def _update_phase_status(self, phase, status, progress=0, is_error=False, is_complete=False):
-        """Update the status of a specific processing phase"""
+        """Update icons, labels, and progress bars for a processing phase.
+
+        Args:
+            phase: Phase identifier ('fetch', 'clean', or 'analyze').
+            status: Human-readable status to display.
+            progress: Integer percentage to set on the phase progress bar.
+            is_error: Whether the phase ended with an error.
+            is_complete: Whether the phase finished successfully.
+        """
         icon_map = {
             'fetch': self.fetch_icon,
             'clean': self.clean_icon,

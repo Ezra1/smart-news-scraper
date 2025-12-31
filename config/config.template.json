@@ -4,9 +4,14 @@
     "NEWS_API_URL": "https://api.thenewsapi.com/v1/news/all",
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
+    "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
     "BATCH_SIZE": 100,
-    "DATABASE_PATH": "news_articles.db",
+    "DATABASE_PATH": "data/news_articles.db",
     "LOGGING_LEVEL": "INFO",
-    "OUTPUT_DIR": "output"
+    "OUTPUT_DIR": "output",
+    "CHATGPT_CONTEXT_MESSAGE": {
+        "role": "system",
+        "content": "You are assessing relevance for a pharmaceutical security intelligence analysis team. Examine each news article and decide whether it discusses threats such as counterfeit medication, theft, diversion, smuggling, supply chain disruption or any other security issue in the pharmaceutical sector. Provide a relevance score from 0 (not relevant) to 1 (highly relevant) and a short explanation."
+    }
 }

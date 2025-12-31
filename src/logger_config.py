@@ -3,6 +3,9 @@ import sys
 import logging
 from pathlib import Path
 
+# Canonical logging configuration for the project; update here instead of any
+# external logging.conf files.
+
 def setup_logging(name: str = None) -> logging.Logger:
     """
     Configure logging for the entire application.
@@ -31,13 +34,25 @@ def setup_logging(name: str = None) -> logging.Logger:
             try:
                 msg = self.format(record)
                 stream = self.stream
-                # Write with error handling for encoding issues
+                if not stream or getattr(stream, "closed", False):
+                    return
+
+                # Write with error handling for encoding issues and closed streams
                 try:
                     stream.write(msg + self.terminator)
                 except UnicodeEncodeError:
                     # Fall back to replacing problematic characters
-                    stream.write(msg.encode(stream.encoding, errors='replace').decode(stream.encoding) + self.terminator)
-                self.flush()
+                    safe_msg = msg.encode(stream.encoding, errors="replace").decode(stream.encoding)
+                    stream.write(safe_msg + self.terminator)
+                except (ValueError, OSError):
+                    # Stream closed during shutdown; ignore
+                    return
+
+                try:
+                    self.flush()
+                except (ValueError, OSError):
+                    # Stream closed during shutdown; ignore
+                    return
             except Exception:
                 self.handleError(record)
     

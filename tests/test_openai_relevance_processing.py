@@ -17,9 +17,26 @@ class DummyDBManager:
 class DummyArticleManager:
     def __init__(self):
         self.insert_calls = []
+        self.processing_results = []
+        self.get_articles_calls = 0
 
     def insert_relevant_article(self, **kwargs):
         self.insert_calls.append(kwargs)
+
+    def record_processing_result(self, raw_article_id: int, relevance_score: float, status: str, **kwargs):
+        self.processing_results.append(
+            {
+                "raw_article_id": raw_article_id,
+                "relevance_score": relevance_score,
+                "status": status,
+                **kwargs,
+            }
+        )
+
+    def get_articles(self):
+        """Mimic ArticleManager.get_articles; track invocations for assertions."""
+        self.get_articles_calls += 1
+        return []
 
 
 class FakeParsed:
@@ -91,6 +108,9 @@ async def test_process_article_returns_article_with_score_when_relevant():
     assert result is not None
     assert result["relevance_score"] == 0.9
     assert processor.article_manager.insert_calls[0]["relevance_score"] == 0.9
+    assert processor.article_manager.processing_results == [
+        {"raw_article_id": 1, "relevance_score": 0.9, "status": "relevant"}
+    ]
 
 
 @pytest.mark.asyncio
@@ -102,4 +122,7 @@ async def test_process_article_returns_none_when_irrelevant():
 
     assert result is None
     assert processor.article_manager.insert_calls == []
+    assert processor.article_manager.processing_results == [
+        {"raw_article_id": 2, "relevance_score": 0.1, "status": "irrelevant"}
+    ]
 

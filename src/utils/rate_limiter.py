@@ -12,7 +12,7 @@ class RateLimiter:
     """
     def __init__(self, 
                  requests_per_minute: Optional[int] = None,
-                 requests_per_second: Optional[float] = None):
+                 requests_per_second: Optional[float] = None) -> None:
         if not (requests_per_minute or requests_per_second):
             raise ValueError("Must specify either requests_per_minute or requests_per_second")
             
@@ -21,7 +21,7 @@ class RateLimiter:
         self.request_times = []
         self._last_request_time = 0
 
-    def wait_if_needed(self):
+    def wait_if_needed(self) -> None:
         """Synchronous rate limiting."""
         current_time = time.time()
         
@@ -47,7 +47,7 @@ class RateLimiter:
         self._last_request_time = time.time()
         self.request_times.append(self._last_request_time)
 
-    async def wait_if_needed_async(self):
+    async def wait_if_needed_async(self) -> None:
         """Asynchronous rate limiting."""
         current_time = time.time()
         

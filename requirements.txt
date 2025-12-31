@@ -4,16 +4,16 @@ openai>=1.0.0
 beautifulsoup4>=4.9.3
 python-dateutil>=2.8.2
 aiohttp>=3.8.0
-scikit-learn>=0.24.2
+scikit-learn==1.4.2
 cryptography>=41.0.0
-bleach>=4.1.0
+bleach==6.1.0
 
 # GUI dependencies
-PyQt6>=6.0.0
+PyQt6==6.7.0
 pydantic>=2.0.0
 
 # Data processing
-numpy>=1.21.0
+numpy>=1.26.4,<2.0
 
 # Security & validation
 html5lib>=1.1

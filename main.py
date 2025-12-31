@@ -1,3 +1,24 @@
+"""Interactive CLI entrypoint for the Smart News Scraper.
+
+This script guides users through configuring credentials, selecting database
+locations, loading search terms, and running the end-to-end scraping, cleaning,
+and relevance-analysis pipeline. Run it from the repository root:
+
+    python main.py
+
+Key prompts:
+- Database path (defaults to data/news_articles.db)
+- Path to search_terms.txt (defaults to data/search_terms.txt)
+- Whether to clear existing raw or relevant articles before processing
+
+Example usage:
+    $ python main.py
+    Enter database file path (leave blank for default 'data/news_articles.db'):
+    Enter path to search_terms.txt (leave blank for default):
+    Delete old raw articles before starting? (Y/N):
+    Delete old relevant articles before starting? (Y/N):
+"""
+
 import os
 import sys
 import traceback
@@ -41,7 +62,11 @@ try:
     print("All modules imported successfully")
 
     def setup_directories():
-        """Create necessary directories if they don't exist"""
+        """Create default data, log, and batch directories if missing.
+
+        Ensures that batch/input, batch/output, output, logs, and data
+        directories exist before any file operations occur.
+        """
         directories = [
             "batch/input",
             "batch/output",
@@ -53,7 +78,14 @@ try:
             Path(directory).mkdir(parents=True, exist_ok=True)
 
     def database_transaction(db: DatabaseManager):
-        """Context manager for database transactions"""
+        """Context manager that wraps database work in a commit/rollback guard.
+
+        Args:
+            db: DatabaseManager instance that owns the connection.
+
+        Returns:
+            A context manager that commits on success and rolls back on errors.
+        """
         class TransactionContextManager:
             def __init__(self, db):
                 self.db = db
@@ -73,6 +105,15 @@ try:
         return TransactionContextManager(db)
 
     async def main():
+        """Run the interactive scraping and processing workflow.
+
+        Prompts for configuration (database path, search terms file, cleanup
+        choices), fetches articles via NewsAPI, processes relevance with OpenAI,
+        persists results, and exports relevant articles to the Desktop.
+
+        Returns:
+            None. Side effects include database mutations and file export.
+        """
         print("Starting Smart News Scraper...")
         setup_directories()
         print("\nSmart News Scraper - Interactive Mode\n")
@@ -194,7 +235,12 @@ try:
         import sys
         
         def signal_handler(sig, frame):
-            """Handle graceful shutdown on SIGINT"""
+            """Handle SIGINT to shut down gracefully.
+
+            Args:
+                sig: Signal number received.
+                frame: Current stack frame when the signal was caught.
+            """
             print("\nShutting down gracefully...")
             sys.exit(0)
         

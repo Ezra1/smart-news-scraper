@@ -178,6 +178,14 @@ class DatabaseManager:
                 published_at TIMESTAMP NOT NULL,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (raw_article_id) REFERENCES raw_articles (id)
+            )''',
+            '''CREATE TABLE IF NOT EXISTS processing_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_article_id INTEGER UNIQUE,
+                relevance_score REAL CHECK (relevance_score >= 0 AND relevance_score <= 1),
+                status TEXT NOT NULL CHECK (status IN ('relevant','irrelevant')),
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (raw_article_id) REFERENCES raw_articles (id)
             )'''
         ]
 
@@ -367,6 +375,67 @@ class ArticleManager:
             logger.error(f"Error inserting relevant article: {e}")
             return False
             
+    def record_processing_result(self, raw_article_id: int, relevance_score: float, status: str) -> bool:
+        """Record processing outcome for any article, including irrelevants."""
+        try:
+            if status not in {"relevant", "irrelevant"}:
+                logger.error(f"Invalid processing status '{status}' for article {raw_article_id}")
+                return False
+
+            query = """
+                INSERT INTO processing_results (raw_article_id, relevance_score, status)
+                VALUES (?, ?, ?)
+                ON CONFLICT(raw_article_id) DO UPDATE SET
+                    relevance_score = excluded.relevance_score,
+                    status = excluded.status,
+                    processed_at = CURRENT_TIMESTAMP
+            """
+            self.db_manager.execute_query(query, (raw_article_id, relevance_score, status))
+            return True
+        except Exception as e:
+            logger.error(f"Error recording processing result: {e}")
+            return False
+
+    def get_relevance_stats(self) -> Dict[str, int]:
+        """Return counts of relevant/irrelevant articles."""
+        try:
+            rows = self.db_manager.execute_query(
+                "SELECT status, COUNT(*) as count FROM processing_results GROUP BY status"
+            ) or []
+            stats = {row["status"]: row["count"] for row in rows}
+            total = sum(stats.values())
+            stats.setdefault("relevant", 0)
+            stats.setdefault("irrelevant", 0)
+            stats["total"] = total
+            return stats
+        except Exception as e:
+            logger.error(f"Error fetching relevance stats: {e}")
+            return {"relevant": 0, "irrelevant": 0, "total": 0}
+
+    def get_processing_stats(self) -> Dict[str, Any]:
+        """
+        Return counts and max relevance score from processing_results.
+        This is the canonical source of truth for analytics.
+        """
+        try:
+            counts = self.db_manager.execute_query(
+                "SELECT status, COUNT(*) as count FROM processing_results GROUP BY status"
+            ) or []
+            max_rows = self.db_manager.execute_query(
+                "SELECT MAX(relevance_score) as max_score FROM processing_results"
+            ) or [{"max_score": 0.0}]
+
+            stats = {row["status"]: row["count"] for row in counts}
+            total = sum(stats.values())
+            stats.setdefault("relevant", 0)
+            stats.setdefault("irrelevant", 0)
+            stats["total"] = total
+            stats["max_score"] = max_rows[0].get("max_score") or 0.0
+            return stats
+        except Exception as e:
+            logger.error(f"Error fetching processing stats: {e}")
+            return {"relevant": 0, "irrelevant": 0, "total": 0, "max_score": 0.0}
+
     # Keep the old method name for backward compatibility
     def insert_cleaned_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float) -> bool:
         """Legacy method that redirects to insert_relevant_article."""

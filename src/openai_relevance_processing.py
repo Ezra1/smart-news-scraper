@@ -146,15 +146,24 @@ class ArticleProcessor(ArticleAnalysisMixin):
                     relevance_score = parsed_response.relevance_score
                     raw_article_id = article.get('id')
                     url = article.get('url')
+                    status = "relevant" if relevance_score >= self.RELEVANCE_THRESHOLD else "irrelevant"
 
                     logger.info(f"Processing article - ID: {raw_article_id}, URL: {url}, Score: {relevance_score}")
                     logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
 
                     # Persist the score on the article for downstream consumers
                     article["relevance_score"] = relevance_score
+                    article["processing_status"] = status
+
+                    if raw_article_id is not None:
+                        self.article_manager.record_processing_result(
+                            raw_article_id=raw_article_id,
+                            relevance_score=relevance_score,
+                            status=status,
+                        )
 
                     # Process and store relevant articles
-                    if relevance_score >= self.RELEVANCE_THRESHOLD:
+                    if status == "relevant":
                         logger.info(f"Article with ID '{raw_article_id}' is relevant (score: {relevance_score})")
                         self.relevant += 1  # Increment relevant count
                         self.max_relevance_score = max(self.max_relevance_score, relevance_score)
@@ -240,12 +249,12 @@ if __name__ == "__main__":
         results = asyncio.run(processor.process_articles(articles))
 
         if results:
-            from src.analysis_utils import analyze_relevance_results, print_analysis_results
+            from src.analysis_utils import calculate_relevance_stats, print_analysis_results
             
-            analysis_results = analyze_relevance_results(
-                processor.relevant, 
-                processor.irrelevant, 
-                processor.max_relevance_score
+            analysis_results = calculate_relevance_stats(
+                processor.relevant,
+                processor.irrelevant,
+                processor.max_relevance_score,
             )
             logger.info(f"Processing completed. Processed {len(results)} articles.")
             print_analysis_results(analysis_results)

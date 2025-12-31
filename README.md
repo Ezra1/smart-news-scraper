@@ -58,7 +58,7 @@ python main.py
 ```
 
 This will:
-1. Load search terms from `search_terms.txt` (or another list such as `pharmaceutical_search_terms.txt`)
+1. Load search terms from `search_terms.txt` (pharmaceutical security/threat-intel focused)
 2. Fetch articles based on those terms
 3. Process articles for relevance using OpenAI
 4. Save relevant articles to the database
@@ -90,7 +90,7 @@ The GUI provides:
 | NEWS_API_REQUESTS_PER_SECOND | Rate limit for The News API | 1 |
 | OPENAI_REQUESTS_PER_MINUTE | Rate limit for OpenAI API | 60 |
 | BATCH_SIZE | Number of articles to process in parallel | 100 |
-| DATABASE_PATH | Path to SQLite database | news_articles.db |
+| DATABASE_PATH | Path to SQLite database | data/news_articles.db |
 | LOGGING_LEVEL | Logging verbosity | INFO |
 | CHATGPT_CONTEXT_MESSAGE | System prompt for OpenAI | Custom relevance instructions |
 
@@ -142,7 +142,6 @@ smart-news-scraper/
 │   ├── insert_search_terms.py   # Search term management
 │   ├── logger_config.py         # Logging configuration
 │   ├── news_scraper.py          # The News API integration
-│   ├── openai_client.py         # OpenAI client
 │   ├── openai_relevance_processing.py # OpenAI processing
 │   ├── pipeline_manager.py      # Processing pipeline
 │   ├── qt_gui.py                # PyQt6 GUI implementation
