@@ -58,6 +58,12 @@ class ArticleProcessor(ArticleAnalysisMixin):
         
         # Store context message
         self.context_message = context_message or self.config_manager.get("CHATGPT_CONTEXT_MESSAGE")
+        # Cancellation flag controlled by pipeline/GUI
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        """Signal the processor to stop processing new articles."""
+        self.cancelled = True
 
     def get_context_data(self, article: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Retrieve relevant context data for the article.
@@ -91,6 +97,9 @@ class ArticleProcessor(ArticleAnalysisMixin):
     async def process_article(self, article: Dict[str, Any], remaining: int) -> Optional[Dict[str, Any]]:
         """Process a single article"""
         try:
+            if self.cancelled:
+                logger.info("Article processing cancelled before starting item")
+                return None
             article_id = article.get('id')
             source = article.get('source', 'Unknown Source')  # Add default source
             if isinstance(source, dict):
@@ -214,22 +223,26 @@ class ArticleProcessor(ArticleAnalysisMixin):
             for i in range(0, total_to_process, self.batch_size):
                 batch = articles[i:i + self.batch_size]
                 
-                # Process articles one by one to properly update the remaining count
+                # Process articles one by one and emit progress after each item
                 batch_results = []
                 for article in batch:
+                    if self.cancelled:
+                        logger.info("Batch processing cancelled by user")
+                        break
                     result = await self.process_article(article, remaining)
                     if result:
                         batch_results.append(result)
-                    # Decrement remaining count after each article is processed
                     remaining -= 1
+
+                    processed_so_far = total_to_process - remaining
+                    if hasattr(self, 'progress_callback'):
+                        self.progress_callback(processed_so_far, total_to_process)
                 
                 valid_results = [r for r in batch_results if not isinstance(r, Exception)]
                 results.extend(valid_results)
-                
-                # Update progress after each batch
-                processed_so_far = total_to_process - remaining
-                if hasattr(self, 'progress_callback'):
-                    self.progress_callback(processed_so_far, total_to_process)
+
+                if self.cancelled:
+                    break
             
             return results
             

@@ -53,6 +53,14 @@ class PipelineManager:
         self.scraper = scraper or NewsArticleScraper(self.config_manager)
         self.processor = None
         self.validator = validator or ArticleValidator()
+        self.cancelled = False  # Controlled via GUI stop button
+
+    def cancel(self) -> None:
+        """Signal the pipeline to stop as soon as possible."""
+        self.cancelled = True
+        if self.processor and hasattr(self.processor, "cancel"):
+            self.processor.cancel()
+        self.status_callback("Processing stopped by user", False, True, False)
 
     def set_callbacks(self, progress_callback: Callable[[int, int], None],
                      status_callback: Callable[[str, bool, bool, bool], None]):
@@ -95,6 +103,9 @@ class PipelineManager:
             Exception: If any phase of the pipeline fails
         """
         try:
+            # Reset cancellation flag for a new run
+            self.cancelled = False
+
             # Validate config before proceeding
             if not self.config_manager.validate():
                 raise ValueError("Configuration validation failed - check API keys")
@@ -112,10 +123,16 @@ class PipelineManager:
             logger.info(f"Processing search terms: {terms}")
             
             articles = await self.fetch_articles(terms)
+            if self.cancelled:
+                logger.warning("Pipeline cancelled during fetch stage")
+                return []
             if not articles:
                 return []
                 
             cleaned = await self.clean_articles(articles)
+            if self.cancelled:
+                logger.warning("Pipeline cancelled during cleaning stage")
+                return []
             if not cleaned:
                 return []
                 
@@ -149,6 +166,10 @@ class PipelineManager:
             
             # Process terms one by one with progress tracking
             for current_term, term in enumerate(terms, 1):
+                if self.cancelled:
+                    logger.info("Fetch cancelled by user")
+                    self.status_callback("Fetch stopped by user", False, True, False)
+                    break
                 self.status_callback(f"Processing term {current_term}/{total_terms}: {term} ({articles_fetched} articles found)", False, False, False)
                 self.progress_callback(current_term, total_terms)
                 
@@ -202,6 +223,10 @@ class PipelineManager:
             total = len(articles)
             
             for i, article in enumerate(articles, 1):
+                if self.cancelled:
+                    logger.info("Cleaning cancelled by user")
+                    self.status_callback("Cleaning stopped by user", False, True, False)
+                    break
                 # Ensure ID is carried through
                 article_id = article.get('id')
                 if article_id is None:
@@ -245,6 +270,10 @@ class PipelineManager:
         try:
             self.status_callback("Analyzing articles...", False, False, False)
 
+            # Reset processor cancellation for this stage
+            if hasattr(self.processor, "cancelled"):
+                self.processor.cancelled = False
+
             # Forward progress from the processor to the callbacks
             self.processor.progress_callback = (
                 lambda current, total: (
@@ -255,7 +284,16 @@ class PipelineManager:
                 )
             )
 
+            # Ensure processor respects cancellation
+            if hasattr(self.processor, "cancelled"):
+                self.processor.cancelled = self.cancelled
+
             results = await self.processor.process_articles(articles)
+
+            if self.cancelled:
+                logger.info("Analysis cancelled by user")
+                self.status_callback("Analysis stopped by user", False, True, False)
+                return results
 
             self.status_callback(
                 f"Analyzed {len(results)} articles", False, False, True

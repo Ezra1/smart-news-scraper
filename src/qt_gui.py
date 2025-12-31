@@ -83,13 +83,21 @@ class ProcessingWorker(QThread):
         try:
             results = await self.pipeline.execute_pipeline(self.search_terms)
             self.completed.emit(results)
-            self.status_updated.emit("Processing completed successfully.", False, False, True)
+            if getattr(self.pipeline, "cancelled", False):
+                self.status_updated.emit("Processing stopped by user", False, True, False)
+            else:
+                self.status_updated.emit("Processing completed successfully.", False, False, True)
         except Exception as e:
             logger.error(f"Worker error: {e}")
             self.status_updated.emit(f"Error: {str(e)}", True, False, False)
 
     def stop(self):
         self._is_running = False
+        try:
+            if self.pipeline:
+                self.pipeline.cancel()
+        except Exception as e:
+            logger.error(f"Error while cancelling pipeline: {e}")
 
 class NewsScraperGUI(QMainWindow):
     def __init__(self):
@@ -975,6 +983,11 @@ class NewsScraperGUI(QMainWindow):
     def _stop_processing(self):
         if self.worker:
             self.worker.stop()
+        if self.pipeline:
+            try:
+                self.pipeline.cancel()
+            except Exception as e:
+                logger.error(f"Error cancelling pipeline from GUI: {e}")
         self._processing = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
