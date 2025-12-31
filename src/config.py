@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
     "NEWS_API_URL": "https://api.thenewsapi.com/v1/news/all",
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
-    "OPENAI_REQUESTS_PER_MINUTE": 60,  # Add missing OpenAI rate limit
+    "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.6,
     "BATCH_SIZE": 100,
     "DATABASE_PATH": "data/news_articles.db",
