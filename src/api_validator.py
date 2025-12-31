@@ -14,16 +14,29 @@ async def validate_news_api_key(api_key: str) -> bool:
     }
     
     try:
-        async with aiohttp.ClientSession() as session:
+        # trust_env=True allows corporate/VPN proxy env vars (HTTPS_PROXY, etc.)
+        async with aiohttp.ClientSession(trust_env=True) as session:
             async with session.get(url, params=params) as response:
                 if response.status == 200:
                     logger.info("The News API token validated successfully")
                     return True
                 elif response.status == 401:
-                    logger.error("Invalid The News API token")
+                    logger.error("Invalid The News API token (401)")
                     return False
+                elif response.status in (402, 429):
+                    # 402 = usage limit reached, 429 = rate limit reached
+                    body = await response.text()
+                    logger.warning(
+                        "The News API token appears valid but limits are reached "
+                        f"(status {response.status}): {body}"
+                    )
+                    return True
                 else:
-                    logger.error(f"The News API validation failed with status {response.status}")
+                    body = await response.text()
+                    logger.error(
+                        f"The News API validation failed with status {response.status}. "
+                        f"Response: {body}"
+                    )
                     return False
     except Exception as e:
         logger.error(f"The News API validation error: {e}")

@@ -115,25 +115,47 @@ class NewsArticleScraper:
         logger.info(f"Fetching articles for term: {term}")
         
         try:
-            await self._wait_for_rate_limit()
-            
             now_utc = datetime.now(timezone.utc)
             thirty_days_ago = now_utc - timedelta(days=30)
+            # The News API accepts several precise date formats without a trailing 'Z'.
+            # Use UTC and seconds precision: YYYY-MM-DDTHH:MM:SS
+            def format_dt(dt: datetime) -> str:
+                return dt.replace(microsecond=0, tzinfo=None).isoformat(timespec="seconds")
+            published_after_val = format_dt(thirty_days_ago)
+            published_before_val = format_dt(now_utc)
 
-            params = {
-                "search": term,
-                "api_token": self.api_key,
-                "limit": 50,
-                "language": "en",
-                "search_fields": "title,description,keywords,main_text",
-                "published_after": thirty_days_ago.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "published_before": now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            }
+            all_articles: List[Dict] = []
+            per_page_limit = 50
+            max_pages = 5  # safety cap to avoid excessive calls
 
-            articles = await self._make_api_request(params)
+            for page in range(1, max_pages + 1):
+                await self._wait_for_rate_limit()
 
-            logger.info(f"Found {len(articles)} articles for term: {term}")
-            return articles
+                params = {
+                    "search": term,
+                    "api_token": self.api_key,
+                    "limit": per_page_limit,
+                    "page": page,
+                    # The News API supports search across defaults; avoid unsupported fields
+                    # that can trigger malformed_parameter responses.
+                    "language": "en",
+                    "published_after": published_after_val,
+                    "published_before": published_before_val,
+                }
+
+                page_articles = await self._make_api_request(params)
+
+                if not page_articles:
+                    break
+
+                all_articles.extend(page_articles)
+
+                # If fewer than the requested limit were returned, no more pages.
+                if len(page_articles) < per_page_limit:
+                    break
+
+            logger.info(f"Found {len(all_articles)} articles for term: {term}")
+            return all_articles
             
         except Exception as e:
             logger.error(f"Error fetching articles for term '{term}': {str(e)}")
@@ -163,8 +185,12 @@ class NewsArticleScraper:
                         return []
                     else:
                         response_text = await response.text()
-                        logger.error(f"API request failed with status {response.status}")
-                        logger.error(f"Response: {response_text}")
+                        logger.error(
+                            "API request failed with status %s | params=%s | response=%s",
+                            response.status,
+                            params,
+                            response_text,
+                        )
                         return []
         except Exception as e:
             logger.error(f"API request error: {e}")
