@@ -11,19 +11,16 @@ from src.logger_config import setup_logging
 logger = setup_logging(__name__)
 
 class ArticleValidator:
+    # Tight HTML whitelist and length limits to reduce XSS/oversize payloads
+    MAX_TITLE_LENGTH = 500
+    MAX_CONTENT_LENGTH = 100_000
+
     def __init__(self):
-        # Define allowed HTML elements with specific attributes
-        self.allowed_tags = [
-            'p', 'br', 'strong', 'em', 'h1', 'h2', 'h3', 
-            'ul', 'ol', 'li', 'a', 'blockquote'
-        ]
+        # Define allowed HTML elements with specific attributes (no images/links/classes)
+        self.allowed_tags = ['p', 'br', 'b', 'i', 'u', 'strong', 'em']
         
         # Define allowed attributes for specific tags
-        self.allowed_attributes = {
-            '*': ['class'],  # Allow class attribute on all elements
-            'a': ['href', 'title', 'rel'],  # Specific attributes for links
-            'img': ['alt', 'title']  # Basic image attributes if needed
-        }
+        self.allowed_attributes = {}
         
         # Define allowed URL schemes
         self.allowed_protocols = ['http', 'https']
@@ -181,6 +178,10 @@ class ArticleValidator:
             # Clean and validate individual fields
             title = self.clean_text(article.get('title', ''))
             content = self.clean_text(article.get('content', ''))
+            if len(title) > self.MAX_TITLE_LENGTH:
+                title = title[:self.MAX_TITLE_LENGTH]
+            if len(content) > self.MAX_CONTENT_LENGTH:
+                content = content[:self.MAX_CONTENT_LENGTH]
             url = article.get('url', '')
             published_at = article.get('published_at', '')
             url_to_image = article.get('url_to_image', '')

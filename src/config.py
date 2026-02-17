@@ -13,6 +13,17 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from src.logger_config import setup_logging
 logger = setup_logging(__name__)
 
+DEFAULT_CONTEXT_MESSAGE = {
+    "role": "system",
+    "content": (
+        "Score this article for pharmaceutical crime INCIDENTS (not commentary). "
+        "HIGH SCORE (0.8-1.0): confirmed enforcement events like seizures, arrests, "
+        "raids, and regulatory recalls/enforcement against unauthorized medicines. "
+        "LOW SCORE (0.0-0.4): policy/trend commentary, cybersecurity-only stories, "
+        "or non-pharma content. Return strict JSON with relevance_score and explanation."
+    ),
+}
+
 # Default Configuration
 DEFAULT_CONFIG = {
     "NEWS_API_KEY": "",
@@ -22,21 +33,15 @@ DEFAULT_CONFIG = {
     "NEWS_API_REQUESTS_PER_SECOND": 1,
     "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
+    "DATE_RANGE_MODE": "preset",
+    "DATE_RANGE_PRESET": "Last 7 days",
+    "DATE_RANGE_AFTER": "",
+    "DATE_RANGE_BEFORE": "",
+    "DATE_RANGE_ON": "",
     "BATCH_SIZE": 100,
     "DATABASE_PATH": "data/news_articles.db",
     "LOGGING_LEVEL": "INFO",
     "OUTPUT_DIR": "output",
-    "CHATGPT_CONTEXT_MESSAGE": {
-        "role": "system",
-        "content": (
-            "You are assessing relevance for a pharmaceutical security intelligence "
-            "analysis team. Examine each news article and decide whether it discusses "
-            "threats such as counterfeit medication, theft, diversion, smuggling, "
-            "supply chain disruption or any other security issue in the pharmaceutical "
-            "sector. Provide a relevance score from 0 (not relevant) to 1 (highly "
-            "relevant) and a short explanation."
-        )
-    }
 }
 
 EXPECTED_API_URL = "https://api.thenewsapi.com/v1/news/all"
@@ -316,6 +321,16 @@ class ConfigManager:
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value."""
         return self.config.get(key, default)
+
+    def get_context_message(self) -> Dict[str, str]:
+        """Get LLM context message with explicit file-over-default precedence."""
+        context_message = self.config.get("CHATGPT_CONTEXT_MESSAGE")
+        if isinstance(context_message, dict):
+            role = context_message.get("role") or DEFAULT_CONTEXT_MESSAGE["role"]
+            content = context_message.get("content")
+            if isinstance(content, str) and content.strip():
+                return {"role": role, "content": content}
+        return DEFAULT_CONTEXT_MESSAGE
 
     def set(self, key: str, value: Any) -> None:
         """Set configuration value and save to file."""

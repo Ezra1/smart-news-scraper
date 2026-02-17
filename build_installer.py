@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Build a standalone ZIP installer using PyInstaller."""
+"""Build a standalone ZIP installer using PyInstaller.
+
+Purpose:
+    Create a distributable ZIP (PyInstaller one-folder build).
+
+Usage:
+    python build_installer.py
+
+Requirements:
+    - Python environment with pyinstaller installed
+    - smart_news_scraper.spec present in repo root
+    - Access to config/config.template.json to seed config.json if missing
+
+Outputs:
+    - dist/SmartNewsScraper/... with bundled app
+    - SmartNewsScraper_vYYYYMMDD.zip archive in project root
+"""
 import shutil
 import subprocess
 import datetime

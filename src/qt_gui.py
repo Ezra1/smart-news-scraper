@@ -17,11 +17,13 @@ from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QPushButton, QLabel, QVBoxLayout,
     QHBoxLayout, QTabWidget, QLineEdit, QFrame, QListWidget, QProgressBar,
     QScrollArea, QTreeWidget, QTreeWidgetItem, QMessageBox, QFileDialog,
-    QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit
+    QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit,
+    QRadioButton, QDateEdit, QButtonGroup
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate
 from PyQt6.QtGui import QFont, QIcon, QAction
 from pathlib import Path
+from datetime import datetime, timedelta
 import asyncio
 import sys
 from queue import Queue
@@ -29,10 +31,8 @@ from queue import Queue
 from src.logger_config import setup_logging
 from src.config import ConfigManager
 from src.database_manager import DatabaseManager, ArticleManager, SearchTermManager
-from src.news_scraper import NewsArticleScraper
-from src.openai_relevance_processing import ArticleProcessor
-from src.article_validator import ArticleValidator
 from src.pipeline_manager import PipelineManager
+from src.pipeline_factory import create_pipeline
 from src.api_validator import validate_news_api_key, validate_openai_api_key
 from src.gui.status_parser import StatusParser, StatusUpdate
 from src.gui.processing_state import ProcessingState
@@ -64,10 +64,11 @@ class ProcessingWorker(QThread):
     status_updated = pyqtSignal(str, bool, bool, bool)
     completed = pyqtSignal(list)
 
-    def __init__(self, pipeline: PipelineManager, search_terms: list):
+    def __init__(self, pipeline: PipelineManager, search_terms: list, date_params: dict | None = None):
         super().__init__()
         self.pipeline = pipeline
         self.search_terms = search_terms
+        self.date_params = date_params or {}
         self._is_running = True
         
         # Connect pipeline callbacks
@@ -81,7 +82,7 @@ class ProcessingWorker(QThread):
 
     async def _process_pipeline(self):
         try:
-            results = await self.pipeline.execute_pipeline(self.search_terms)
+            results = await self.pipeline.execute_pipeline(self.search_terms, date_params=self.date_params)
             self.completed.emit(results)
             if getattr(self.pipeline, "cancelled", False):
                 self.status_updated.emit("Processing stopped by user", False, True, False)
@@ -99,6 +100,193 @@ class ProcessingWorker(QThread):
         except Exception as e:
             logger.error(f"Error while cancelling pipeline: {e}")
 
+class DateRangeWidget(QGroupBox):
+    """Date range selector with presets and custom options."""
+
+    def __init__(self, config_manager: ConfigManager, parent=None):
+        super().__init__("Date Range", parent)
+        self.config_manager = config_manager
+        self._init_ui()
+        self._load_from_config(config_manager.config)
+
+    def _init_ui(self):
+        layout = QVBoxLayout()
+
+        # Radio buttons for mode selection
+        self.mode_group = QButtonGroup(self)
+
+        # Preset mode
+        preset_layout = QHBoxLayout()
+        self.preset_radio = QRadioButton("Preset:")
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems([
+            "Last 24 hours",
+            "Last 7 days",
+            "Last 30 days",
+            "Last 3 months",
+            "Last 6 months",
+            "Last year",
+            "Last 2 years",
+            "All time (no filter)"
+        ])
+        self.preset_combo.setCurrentText("Last 7 days")
+        preset_layout.addWidget(self.preset_radio)
+        preset_layout.addWidget(self.preset_combo)
+        preset_layout.addStretch()
+
+        # Custom range mode
+        custom_layout = QHBoxLayout()
+        self.custom_radio = QRadioButton("Custom Range:")
+        self.after_label = QLabel("After:")
+        self.after_date = QDateEdit()
+        self.after_date.setCalendarPopup(True)
+        self.after_date.setDate(QDate.currentDate().addMonths(-1))
+        self.before_label = QLabel("Before:")
+        self.before_date = QDateEdit()
+        self.before_date.setCalendarPopup(True)
+        self.before_date.setDate(QDate.currentDate())
+        custom_layout.addWidget(self.custom_radio)
+        custom_layout.addWidget(self.after_label)
+        custom_layout.addWidget(self.after_date)
+        custom_layout.addWidget(self.before_label)
+        custom_layout.addWidget(self.before_date)
+        custom_layout.addStretch()
+
+        # Specific date mode
+        specific_layout = QHBoxLayout()
+        self.specific_radio = QRadioButton("Specific Date:")
+        self.specific_date = QDateEdit()
+        self.specific_date.setCalendarPopup(True)
+        self.specific_date.setDate(QDate.currentDate())
+        specific_layout.addWidget(self.specific_radio)
+        specific_layout.addWidget(self.specific_date)
+        specific_layout.addStretch()
+
+        # Add to button group
+        self.mode_group.addButton(self.preset_radio, 0)
+        self.mode_group.addButton(self.custom_radio, 1)
+        self.mode_group.addButton(self.specific_radio, 2)
+        self.preset_radio.setChecked(True)
+
+        # Connect signals to enable/disable widgets
+        self.preset_radio.toggled.connect(self._update_enabled_state)
+        self.custom_radio.toggled.connect(self._update_enabled_state)
+        self.specific_radio.toggled.connect(self._update_enabled_state)
+
+        layout.addLayout(preset_layout)
+        layout.addLayout(custom_layout)
+        layout.addLayout(specific_layout)
+        self.setLayout(layout)
+
+        self._update_enabled_state()
+
+    def _load_from_config(self, config: dict):
+        """Restore saved preferences into the widget."""
+        mode = config.get("DATE_RANGE_MODE", "preset")
+        preset = config.get("DATE_RANGE_PRESET", "Last 7 days")
+        after = config.get("DATE_RANGE_AFTER", "")
+        before = config.get("DATE_RANGE_BEFORE", "")
+        specific = config.get("DATE_RANGE_ON", "")
+
+        mode_map = {
+            "preset": self.preset_radio,
+            "custom": self.custom_radio,
+            "specific": self.specific_radio
+        }
+        if mode in mode_map:
+            mode_map[mode].setChecked(True)
+        else:
+            self.preset_radio.setChecked(True)
+
+        if preset:
+            self.preset_combo.setCurrentText(preset)
+
+        if after:
+            self.after_date.setDate(self._parse_date(after, fallback=QDate.currentDate().addMonths(-1)))
+        if before:
+            self.before_date.setDate(self._parse_date(before, fallback=QDate.currentDate()))
+        if specific:
+            self.specific_date.setDate(self._parse_date(specific, fallback=QDate.currentDate()))
+
+        self._update_enabled_state()
+
+    def _parse_date(self, date_str: str, fallback: QDate) -> QDate:
+        parsed = QDate.fromString(date_str, "yyyy-MM-dd")
+        return parsed if parsed.isValid() else fallback
+
+    def _update_enabled_state(self):
+        """Enable/disable date pickers based on selected mode."""
+        self.preset_combo.setEnabled(self.preset_radio.isChecked())
+        self.after_date.setEnabled(self.custom_radio.isChecked())
+        self.before_date.setEnabled(self.custom_radio.isChecked())
+        self.specific_date.setEnabled(self.specific_radio.isChecked())
+
+    def get_date_params(self) -> dict:
+        """Return dict with published_after, published_before, or published_on."""
+        params: dict = {}
+        today = datetime.now()
+
+        if self.preset_radio.isChecked():
+            preset = self.preset_combo.currentText()
+            if preset == "Last 24 hours":
+                after = today - timedelta(days=1)
+            elif preset == "Last 7 days":
+                after = today - timedelta(days=7)
+            elif preset == "Last 30 days":
+                after = today - timedelta(days=30)
+            elif preset == "Last 3 months":
+                after = today - timedelta(days=90)
+            elif preset == "Last 6 months":
+                after = today - timedelta(days=180)
+            elif preset == "Last year":
+                after = today - timedelta(days=365)
+            elif preset == "Last 2 years":
+                after = today - timedelta(days=730)
+            elif preset == "All time (no filter)":
+                return {}
+            else:
+                after = today - timedelta(days=7)
+            params["published_after"] = after.strftime("%Y-%m-%d")
+
+        elif self.custom_radio.isChecked():
+            after_qdate = self.after_date.date()
+            before_qdate = self.before_date.date()
+            params["published_after"] = after_qdate.toString("yyyy-MM-dd")
+            params["published_before"] = before_qdate.toString("yyyy-MM-dd")
+
+        elif self.specific_radio.isChecked():
+            specific_qdate = self.specific_date.date()
+            params["published_on"] = specific_qdate.toString("yyyy-MM-dd")
+
+        return params
+
+    def validate_selection(self) -> tuple[bool, str]:
+        """Validate user input for date selections."""
+        today = QDate.currentDate()
+
+        if self.custom_radio.isChecked():
+            if self.after_date.date() > self.before_date.date():
+                return False, "The 'After' date must be on or before the 'Before' date."
+            if self.before_date.date() > today:
+                return False, "The 'Before' date cannot be in the future."
+
+        if self.specific_radio.isChecked():
+            if self.specific_date.date() > today:
+                return False, "The specific date cannot be in the future."
+
+        return True, ""
+
+    def get_config_values(self) -> dict:
+        """Return config-friendly representation of the widget state."""
+        mode = "preset" if self.preset_radio.isChecked() else "custom" if self.custom_radio.isChecked() else "specific"
+        return {
+            "DATE_RANGE_MODE": mode,
+            "DATE_RANGE_PRESET": self.preset_combo.currentText(),
+            "DATE_RANGE_AFTER": self.after_date.date().toString("yyyy-MM-dd"),
+            "DATE_RANGE_BEFORE": self.before_date.date().toString("yyyy-MM-dd"),
+            "DATE_RANGE_ON": self.specific_date.date().toString("yyyy-MM-dd"),
+        }
+
 class NewsScraperGUI(QMainWindow):
     def __init__(self):
         """Initialize the main window, services, and processing pipeline.
@@ -111,10 +299,11 @@ class NewsScraperGUI(QMainWindow):
         self.setWindowTitle("Smart News Scraper")
         self.setMinimumSize(1200, 800)
 
-        # Initialize base components
-        self.validator = ArticleValidator()
-        self.config_manager = ConfigManager()
-        self.db_manager = DatabaseManager(self.config_manager.get("DATABASE_PATH"))
+        # Initialize base components via shared factory to keep CLI/GUI consistent
+        pipeline_components = create_pipeline()
+        self.validator = pipeline_components["validator"]
+        self.config_manager = pipeline_components["config"]
+        self.db_manager = pipeline_components["db_manager"]
         self.search_manager = SearchTermManager(self.db_manager)
         self.article_manager = ArticleManager(self.db_manager)
         self.processing_queue = Queue()
@@ -428,6 +617,10 @@ class NewsScraperGUI(QMainWindow):
         
         layout.addWidget(threshold_group)
 
+        # Date Range Group
+        self.date_range_widget = DateRangeWidget(self.config_manager)
+        layout.addWidget(self.date_range_widget)
+
         # Add ChatGPT Context Message group
         context_group = QGroupBox("ChatGPT Context Message")
         context_layout = QVBoxLayout(context_group)
@@ -437,7 +630,7 @@ class NewsScraperGUI(QMainWindow):
         
         self.context_message = QTextEdit()
         self.context_message.setPlaceholderText("Enter the system message for ChatGPT...")
-        default_message = self.config_manager.get("CHATGPT_CONTEXT_MESSAGE", {}).get("content", "")
+        default_message = self.config_manager.get_context_message().get("content", "")
         self.context_message.setText(default_message)
         context_layout.addWidget(self.context_message)
         
@@ -457,6 +650,12 @@ class NewsScraperGUI(QMainWindow):
             # Get values
             news_key = self.news_api_key.text().strip()
             openai_key = self.openai_api_key.text().strip()
+
+            # Validate date range before saving
+            valid_dates, date_error = self.date_range_widget.validate_selection()
+            if not valid_dates:
+                QMessageBox.warning(self, "Invalid Date Range", date_error)
+                return
             
             # Show validation progress
             self.progress_dialog = QMessageBox(self)
@@ -505,8 +704,9 @@ class NewsScraperGUI(QMainWindow):
                 "CHATGPT_CONTEXT_MESSAGE": {
                     "role": "system",
                     "content": self.context_message.toPlainText()
-                }
+                },
             }
+            config_updates.update(self.date_range_widget.get_config_values())
 
             # Save all at once to trigger encrypted storage
             self.config_manager.save_config(config_updates)
@@ -862,10 +1062,16 @@ class NewsScraperGUI(QMainWindow):
             self._refresh_search_terms()
 
     def _remove_search_term(self):
+        current_row = self.terms_list.currentRow()
         current = self.terms_list.currentItem()
         if current:
             self.search_manager.delete_search_term(current.text())
             self._refresh_search_terms()
+
+            # Auto-select the next item (same index now points to the one below)
+            if self.terms_list.count() > 0:
+                next_row = min(current_row, self.terms_list.count() - 1)
+                self.terms_list.setCurrentRow(next_row)
 
     def _import_search_terms(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Search Terms File", "", "Text Files (*.txt);;All Files (*)")
@@ -903,6 +1109,13 @@ class NewsScraperGUI(QMainWindow):
                 self.tabs.setCurrentIndex(0)  # Switch to config tab
                 return
 
+            valid_dates, date_error = self.date_range_widget.validate_selection()
+            if not valid_dates:
+                QMessageBox.warning(self, "Invalid Date Range", date_error)
+                self.tabs.setCurrentIndex(0)
+                return
+            date_params = self.date_range_widget.get_date_params()
+
             # Reset fetched counter when starting new run
             self._update_fetched_count(0)
             search_terms = self.search_manager.get_search_terms()
@@ -927,7 +1140,8 @@ class NewsScraperGUI(QMainWindow):
             # Initialize worker with pipeline
             self.worker = ProcessingWorker(
                 pipeline=self.pipeline,
-                search_terms=search_terms
+                search_terms=search_terms,
+                date_params=date_params
             )
             self.worker.progress_updated.connect(self._update_progress)
             self.worker.status_updated.connect(self._update_status)
@@ -948,7 +1162,7 @@ class NewsScraperGUI(QMainWindow):
             results: List of processed article dicts returned by the pipeline.
         """
         result_count = len(results) if results else 0
-        logger.info(f"Processing completed with {result_count} results")
+        logger.info(f"Processing completed with {result_count} relevant results")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self._processing = False
@@ -963,16 +1177,16 @@ class NewsScraperGUI(QMainWindow):
             self._update_results(results)
             self._update_previews()
             
-            # Count only articles found relevant during this run
-            relevant_count = getattr(self.pipeline.processor, "relevant", len(results))
+            # Results already contain only relevant articles
+            relevant_count = len(results)
 
             QMessageBox.information(
                 self,
                 "Success",
-                f"Processed {result_count} articles successfully. Found {relevant_count} relevant articles."
+                f"Processed {relevant_count} relevant articles successfully."
             )
             logger.info(
-                f"Successfully processed {result_count} articles. Found {relevant_count} relevant articles."
+                f"Successfully processed {relevant_count} relevant articles."
             )
         else:
             self._reset_phase_statuses()

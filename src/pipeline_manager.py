@@ -44,13 +44,15 @@ class PipelineManager:
         """
         self.db_manager = db_manager or DatabaseManager()
         self.config_manager = config_manager or ConfigManager()
-        self.context_message = self.config_manager.get("CHATGPT_CONTEXT_MESSAGE")
+        self.context_message = self.config_manager.get_context_message()
         # Default to no-op callbacks so headless/CLI usage does not raise
         self.progress_callback = lambda current, total: None
         self.status_callback = (
             lambda message, error=False, rate_limited=False, done=False: None
         )
-        self.scraper = scraper or NewsArticleScraper(self.config_manager)
+        self.scraper = scraper or NewsArticleScraper(
+            self.config_manager, db_manager=self.db_manager
+        )
         self.processor = None
         self.validator = validator or ArticleValidator()
         self.cancelled = False  # Controlled via GUI stop button
@@ -85,7 +87,7 @@ class PipelineManager:
         """
         self.context_message = context_message
 
-    async def execute_pipeline(self, search_terms: List[dict]):
+    async def execute_pipeline(self, search_terms: List[dict], date_params: Optional[dict] = None):
         """
         Execute the complete article processing pipeline.
 
@@ -122,7 +124,7 @@ class PipelineManager:
             terms = [term['term'] for term in search_terms if isinstance(term, dict) and 'term' in term]
             logger.info(f"Processing search terms: {terms}")
             
-            articles = await self.fetch_articles(terms)
+            articles = await self.fetch_articles(terms, date_params=date_params)
             if self.cancelled:
                 logger.warning("Pipeline cancelled during fetch stage")
                 return []
@@ -146,7 +148,7 @@ class PipelineManager:
             logger.error(f"Pipeline error: {str(e)}")
             raise
 
-    async def fetch_articles(self, terms: List[str]) -> List[dict]:
+    async def fetch_articles(self, terms: List[str], date_params: Optional[dict] = None) -> List[dict]:
         """Fetch articles from news sources based on search terms."""
         try:
             self.status_callback("Starting article fetch...", False, False, False)
@@ -174,7 +176,11 @@ class PipelineManager:
                 self.progress_callback(current_term, total_terms)
                 
                 # Pass single term to scraper
-                term_articles = await self.scraper.fetch_articles([term], {term: search_term_map.get(term)})
+                term_articles = await self.scraper.fetch_articles(
+                    [term],
+                    {term: search_term_map.get(term)},
+                    date_params=date_params,
+                )
                 
                 # Check for rate limit after each term
                 if self.scraper.rate_limited:
@@ -289,16 +295,19 @@ class PipelineManager:
                 self.processor.cancelled = self.cancelled
 
             results = await self.processor.process_articles(articles)
+            relevant_results = [
+                r.article for r in results if getattr(r, "status", "") == "relevant" and getattr(r, "article", None)
+            ]
+            error_count = len([r for r in results if getattr(r, "status", "") == "error"])
 
             if self.cancelled:
                 logger.info("Analysis cancelled by user")
                 self.status_callback("Analysis stopped by user", False, True, False)
-                return results
+                return relevant_results
 
-            self.status_callback(
-                f"Analyzed {len(results)} articles", False, False, True
-            )
-            return results
+            summary_msg = f"Analyzed {len(results)} articles (relevant: {len(relevant_results)}, errors: {error_count})"
+            self.status_callback(summary_msg, False, False, True)
+            return relevant_results
         except Exception as e:
             self.status_callback(f"Analysis error: {str(e)}", True, False, False)
             raise

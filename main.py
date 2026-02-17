@@ -57,6 +57,8 @@ try:
     logger.info("Relevance filter module imported")
     
     from src.analysis_utils import analyze_relevance_results, print_analysis_results
+    from src.utils.path_validator import validate_path
+    from src.pipeline_factory import create_pipeline
     logger.info("Analysis utils module imported")
     
     print("All modules imported successfully")
@@ -127,17 +129,27 @@ try:
                 print("Please update your config/config.json file.")
                 return
 
-            db_path = input("Enter database file path (leave blank for default 'data/news_articles.db'): ").strip()
-            db_path = db_path if db_path else "data/news_articles.db"
-            db = DatabaseManager(db_path)
-            
+            db_path_input = input("Enter database file path (leave blank for default 'data/news_articles.db'): ").strip()
+            db_path_input = db_path_input if db_path_input else "data/news_articles.db"
+            try:
+                db_path = str(validate_path(db_path_input, base_dir=Path("data").resolve(), must_exist=False))
+            except ValueError as e:
+                print(f"Invalid database path: {e}")
+                return
+            pipeline = create_pipeline(db_path=db_path, config_manager=config_manager)
+            db = pipeline["db_manager"]
             search_manager = SearchTermManager(db)
             article_manager = ArticleManager(db)
-            processor = ArticleProcessor()
-            scraper = NewsArticleScraper(config_manager)
+            processor = pipeline["processor"]
+            scraper = pipeline["scraper"]
 
-            search_terms_file = input("Enter path to search_terms.txt (leave blank for default): ").strip()
-            search_terms_file = search_terms_file if search_terms_file else "data/search_terms.txt"
+            search_terms_file_input = input("Enter path to search_terms.txt (leave blank for default): ").strip()
+            search_terms_file_input = search_terms_file_input if search_terms_file_input else "data/search_terms.txt"
+            try:
+                search_terms_file = str(validate_path(search_terms_file_input, base_dir=Path("data").resolve(), must_exist=True))
+            except ValueError as e:
+                print(f"Invalid search terms path: {e}")
+                return
 
             delete_old_raw = input("Delete old raw articles before starting? (Y/N): ").strip().lower() == "y"
             if delete_old_raw:
@@ -178,7 +190,11 @@ try:
                     articles_to_process = article_manager.get_articles()
                     # Process the articles using the ArticleProcessor
                     results = await processor.process_articles(articles_to_process)
-                    if results:
+                    relevant_articles = [r.article for r in results if getattr(r, "status", "") == "relevant" and getattr(r, "article", None)]
+                    error_count = len([r for r in results if getattr(r, "status", "") == "error"])
+                    if error_count:
+                        print(f"Encountered {error_count} processing errors.")
+                    if relevant_articles:
                         # Print a message indicating the start of relevance filtering
                         print("Processing for relevance filtering...")
                         # Initialize the RelevanceFilter with the article manager
@@ -197,7 +213,11 @@ try:
                         print("Processing existing articles...")
                         # Process the existing articles using the ArticleProcessor
                         results = await processor.process_articles(articles_to_process)
-                        if results:
+                        relevant_articles = [r.article for r in results if getattr(r, "status", "") == "relevant" and getattr(r, "article", None)]
+                        error_count = len([r for r in results if getattr(r, "status", "") == "error"])
+                        if error_count:
+                            print(f"Encountered {error_count} processing errors.")
+                        if relevant_articles:
                             # Initialize the RelevanceFilter with the article manager
                             relevance_filter = RelevanceFilter(article_manager)
                             # Analyze the processed results

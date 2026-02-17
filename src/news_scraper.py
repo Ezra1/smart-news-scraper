@@ -7,6 +7,7 @@ import sys
 
 from src.database_manager import ArticleManager, DatabaseManager
 from src.logger_config import setup_logging
+from src.incident_filter import is_incident_article
 logger = setup_logging(__name__)
 
 project_root = Path(__file__).resolve().parent.parent
@@ -15,18 +16,28 @@ sys.path.append(str(project_root))
 from src.config import ConfigManager
 from src.utils.rate_limiter import RateLimiter
 
+CLIENT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
+
+
 class NewsArticleScraper:
     """
     A class to handle asynchronous news article fetching with error handling.
     Interfaces with The News API to fetch articles based on search terms.
     """
     
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(
+        self,
+        config_manager: ConfigManager,
+        db_manager: Optional[DatabaseManager] = None,
+        db_path: Optional[str] = None,
+    ):
         """
         Initialize the scraper with configuration settings.
         
         Args:
             config_manager: ConfigManager instance containing API keys and settings
+            db_manager: Optional shared DatabaseManager instance to reuse
+            db_path: Optional database path when creating a new manager
         """
         self.config = config_manager
         self.api_key = self.config.get("NEWS_API_KEY")
@@ -35,14 +46,19 @@ class NewsArticleScraper:
         self.partial_results = []  # Track processed search terms for resume capability
         
         # Initialize database components
-        self.db_manager = DatabaseManager()
+        self.db_manager = db_manager or DatabaseManager(db_path or "news_articles.db")
         self.article_manager = ArticleManager(self.db_manager)
         
         # Rate limiting settings
         requests_per_second = config_manager.get("NEWS_API_REQUESTS_PER_SECOND", 1)
         self.rate_limiter = RateLimiter(requests_per_second=requests_per_second)
         
-    async def fetch_articles(self, search_terms: List[str], search_term_map: Dict[str, int]) -> List[dict]:
+    async def fetch_articles(
+        self,
+        search_terms: List[str],
+        search_term_map: Dict[str, int],
+        date_params: Optional[Dict[str, str]] = None,
+    ) -> List[dict]:
         """
         Fetch and process articles for multiple search terms.
         
@@ -59,7 +75,7 @@ class NewsArticleScraper:
         for term in search_terms:
             try:
                 # Fetch raw articles for the term
-                raw_articles = await self._fetch_for_term(term)
+                raw_articles = await self._fetch_for_term(term, date_params)
 
                 if self.rate_limited:
                     break
@@ -75,8 +91,9 @@ class NewsArticleScraper:
                         combined_content = f"{article.get('description')}\n\n{article.get('snippet')}"
                     if not combined_content:
                         combined_content = article.get("title", "")
+                    title = article.get("title", "")
                     article_data = {
-                        "title": article.get("title"),
+                        "title": title,
                         "content": combined_content,
                         "description": article.get("description"),
                         "snippet": article.get("snippet"),
@@ -86,7 +103,8 @@ class NewsArticleScraper:
                         "image_url": article.get("image_url"),
                         "published_at": article.get("published_at"),
                         "publishedAt": article.get("publishedAt"),
-                        "search_term_id": search_term_map.get(term)
+                        "search_term_id": search_term_map.get(term),
+                        "incident_level": is_incident_article(f"{title} {combined_content}")[0],
                     }
 
                     article_id = self.article_manager.insert_article(article_data)
@@ -102,7 +120,11 @@ class NewsArticleScraper:
         return all_articles
 
     
-    async def _fetch_for_term(self, term: str) -> List[Dict]:
+    async def _fetch_for_term(
+        self,
+        term: str,
+        date_params: Optional[Dict[str, str]] = None,
+    ) -> List[Dict]:
         """
         Fetch articles for a single search term from the news API.
         
@@ -115,14 +137,7 @@ class NewsArticleScraper:
         logger.info(f"Fetching articles for term: {term}")
         
         try:
-            now_utc = datetime.now(timezone.utc)
-            thirty_days_ago = now_utc - timedelta(days=30)
-            # The News API accepts several precise date formats without a trailing 'Z'.
-            # Use UTC and seconds precision: YYYY-MM-DDTHH:MM:SS
-            def format_dt(dt: datetime) -> str:
-                return dt.replace(microsecond=0, tzinfo=None).isoformat(timespec="seconds")
-            published_after_val = format_dt(thirty_days_ago)
-            published_before_val = format_dt(now_utc)
+            date_filters = self._resolve_date_filters(date_params)
 
             all_articles: List[Dict] = []
             per_page_limit = 50
@@ -130,18 +145,18 @@ class NewsArticleScraper:
 
             for page in range(1, max_pages + 1):
                 await self._wait_for_rate_limit()
+                search_query = self.build_search_query([term])
 
                 params = {
-                    "search": term,
+                    "search": search_query,
                     "api_token": self.api_key,
                     "limit": per_page_limit,
                     "page": page,
                     # The News API supports search across defaults; avoid unsupported fields
                     # that can trigger malformed_parameter responses.
                     "language": "en",
-                    "published_after": published_after_val,
-                    "published_before": published_before_val,
                 }
+                params.update(date_filters)
 
                 page_articles = await self._make_api_request(params)
 
@@ -164,7 +179,7 @@ class NewsArticleScraper:
     async def _make_api_request(self, params: dict) -> List[dict]:
         """Make request to The News API with error handling."""
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=CLIENT_TIMEOUT) as session:
                 async with session.get(self.api_url, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -192,6 +207,9 @@ class NewsArticleScraper:
                             response_text,
                         )
                         return []
+        except asyncio.TimeoutError:
+            logger.error("API request timed out")
+            return []
         except Exception as e:
             logger.error(f"API request error: {e}")
             return []
@@ -200,7 +218,11 @@ class NewsArticleScraper:
         """Implement rate limiting."""
         await self.rate_limiter.wait_if_needed_async()
 
-    async def fetch_all_articles(self, search_terms: List[Dict]) -> List[Dict]:
+    async def fetch_all_articles(
+        self,
+        search_terms: List[Dict],
+        date_params: Optional[Dict[str, str]] = None,
+    ) -> List[Dict]:
         """
         Fetch articles for multiple search terms with rate limiting and error handling.
         
@@ -219,7 +241,7 @@ class NewsArticleScraper:
                 return all_articles
             
             # Fetch articles for the current term
-            articles = await self._fetch_for_term(term['term'])
+            articles = await self._fetch_for_term(term['term'], date_params)
             self.partial_results.append(term['term'])  # Track progress
             
             # Add search term ID to each article and add to results
@@ -229,3 +251,46 @@ class NewsArticleScraper:
                 all_articles.extend(articles)
 
         return all_articles
+
+    def build_search_query(self, base_terms: List[str]) -> str:
+        """Build query biased toward enforcement incidents."""
+        incident_boost = "(seized | arrested | raided | smuggling | counterfeit | recall)"
+        base = " | ".join(base_terms)
+        # Include base-only matches while still biasing toward incident language.
+        query = f"({base}) ({incident_boost} | {base})"
+        query += " -opinion -editorial -commentary -analysis"
+        return query
+
+    def _resolve_date_filters(
+        self,
+        date_params: Optional[Dict[str, str]],
+    ) -> Dict[str, str]:
+        """Normalize date filters for The News API."""
+        today = datetime.now(timezone.utc).date()
+
+        # Default to last 30 days if not provided
+        if date_params is None:
+            return {
+                "published_after": (today - timedelta(days=30)).strftime("%Y-%m-%d"),
+                "published_before": today.strftime("%Y-%m-%d"),
+            }
+
+        # Explicit empty dict -> no filter (all time)
+        if not date_params:
+            return {}
+
+        after = date_params.get("published_after") if date_params else None
+        before = date_params.get("published_before") if date_params else None
+        specific = date_params.get("published_on") if date_params else None
+
+        # If a specific date is provided, prefer it over ranges
+        if specific:
+            return {"published_on": specific}
+
+        filters = {}
+        if after:
+            filters["published_after"] = after
+        if before:
+            filters["published_before"] = before
+
+        return filters

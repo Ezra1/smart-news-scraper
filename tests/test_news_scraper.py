@@ -90,6 +90,28 @@ def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
 
     results = asyncio.run(scraper._fetch_for_term("term"))
     assert results == [{"title": "B"}]
-    assert sessions[0].last_params["search"] == "term"
+    assert "term" in sessions[0].last_params["search"]
+    assert "-opinion" in sessions[0].last_params["search"]
     assert sessions[0].last_params["api_token"] == "api-key"
+
+
+def test_build_search_query_includes_base_terms(scraper):
+    query = scraper.build_search_query(["semaglutide", "tirzepatide"])
+    assert "semaglutide" in query
+    assert "tirzepatide" in query
+
+
+def test_build_search_query_excludes_commentary(scraper):
+    query = scraper.build_search_query(["pharma"])
+    assert "-opinion" in query
+    assert "-editorial" in query
+    assert "-commentary" in query
+    assert "-analysis" in query
+
+
+def test_build_search_query_does_not_require_incident_keyword(scraper):
+    """Query should not force an AND between base term and incident keywords."""
+    query = scraper.build_search_query(["semaglutide"])
+    assert "semaglutide" in query
+    assert "+" not in query
 

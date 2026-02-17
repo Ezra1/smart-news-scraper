@@ -15,7 +15,8 @@ async def validate_news_api_key(api_key: str) -> bool:
     
     try:
         # trust_env=True allows corporate/VPN proxy env vars (HTTPS_PROXY, etc.)
-        async with aiohttp.ClientSession(trust_env=True) as session:
+        timeout = aiohttp.ClientTimeout(total=10, connect=5)
+        async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
             async with session.get(url, params=params) as response:
                 if response.status == 200:
                     logger.info("The News API token validated successfully")
@@ -38,6 +39,9 @@ async def validate_news_api_key(api_key: str) -> bool:
                         f"Response: {body}"
                     )
                     return False
+    except asyncio.TimeoutError:
+        logger.error("The News API validation timed out")
+        return False
     except Exception as e:
         logger.error(f"The News API validation error: {e}")
         return False

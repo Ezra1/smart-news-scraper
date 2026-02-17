@@ -8,21 +8,23 @@ sys.path.append(project_root)
 
 from src.logger_config import setup_logging
 from src.config import ConfigManager 
+from src.utils.path_validator import validate_path
 logger = setup_logging(__name__)
 
 def extract_cleaned_data(db_path: str, output_file: str):
     """Extract relevant articles from the database and save them to a .txt file."""
     conn = None  # Initialize conn to None
     try:
-        if not os.path.exists(db_path):
-            raise FileNotFoundError(f"Database file not found: {db_path}")
+        project_root_path = Path(__file__).resolve().parent.parent
+        db_path_validated = str(validate_path(db_path, base_dir=project_root_path, must_exist=True))
+        output_file_validated = str(validate_path(output_file, base_dir=Path.home(), must_exist=False))
 
         # Get the relevance threshold from config
         config_manager = ConfigManager()
         relevance_threshold = config_manager.get("RELEVANCE_THRESHOLD", 0.7)
         logger.info(f"Using relevance threshold from config: {relevance_threshold}")
 
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path_validated)
         cursor = conn.cursor()
 
         query = """
@@ -33,7 +35,7 @@ def extract_cleaned_data(db_path: str, output_file: str):
         cursor.execute(query, (relevance_threshold,))
         articles = cursor.fetchall()
 
-        with open(output_file, 'w', encoding='utf-8') as file:
+        with open(output_file_validated, 'w', encoding='utf-8') as file:
             file.write(f"Articles with relevance score >= {relevance_threshold}:\n\n")
             for title, content, url, score in articles:
                 file.write(f"Relevance Score: {score}\n")

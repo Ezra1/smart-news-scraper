@@ -1,11 +1,14 @@
 import asyncio
 import pytest
 
-from src.openai_relevance_processing import ArticleProcessor
+from src.openai_relevance_processing import ArticleProcessor, ProcessingResult
 
 
 class DummyRateLimiter:
     def wait_if_needed(self):
+        return None
+
+    async def wait_if_needed_async(self):
         return None
 
 
@@ -94,6 +97,7 @@ def make_processor(score: float, threshold: float = 0.5) -> ArticleProcessor:
     processor.irrelevant = 0
     processor.total_relevant = 0
     processor.max_relevance_score = 0.0
+    processor.error_count = 0
     processor.context_message = {"role": "system", "content": "test"}
     return processor
 
@@ -105,8 +109,10 @@ async def test_process_article_returns_article_with_score_when_relevant():
 
     result = await processor.process_article(article, remaining=1)
 
-    assert result is not None
-    assert result["relevance_score"] == 0.9
+    assert isinstance(result, ProcessingResult)
+    assert result.status == "relevant"
+    assert result.article is not None
+    assert result.article["relevance_score"] == 0.9
     assert processor.article_manager.insert_calls[0]["relevance_score"] == 0.9
     assert processor.article_manager.processing_results == [
         {"raw_article_id": 1, "relevance_score": 0.9, "status": "relevant"}
@@ -120,7 +126,9 @@ async def test_process_article_returns_none_when_irrelevant():
 
     result = await processor.process_article(article, remaining=1)
 
-    assert result is None
+    assert isinstance(result, ProcessingResult)
+    assert result.status == "irrelevant"
+    assert result.article is None
     assert processor.article_manager.insert_calls == []
     assert processor.article_manager.processing_results == [
         {"raw_article_id": 2, "relevance_score": 0.1, "status": "irrelevant"}

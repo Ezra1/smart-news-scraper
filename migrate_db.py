@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
-"""
-Database migration script to rename cleaned_articles to relevant_articles.
-This script will:
-1. Create the relevant_articles table if it doesn't exist
-2. Copy data from cleaned_articles to relevant_articles
-3. Drop the cleaned_articles table
+"""Database Migration Script
+
+Migrates data from legacy schema (cleaned_articles table) to the current
+schema (relevant_articles table).
+
+Usage:
+    python migrate_db.py [--db-path PATH]
+
+Arguments:
+    --db-path: Path to database file (default: data/news_articles.db)
+
+Examples:
+    python migrate_db.py
+    python migrate_db.py --db-path /path/to/my.db
+
+Notes:
+    - Safe to run multiple times (idempotent)
+    - Requires write access to the database file
+    - Creates the destination table if missing, then drops cleaned_articles
 """
 
 import os

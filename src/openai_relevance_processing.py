@@ -3,9 +3,10 @@ import sys
 import time
 import asyncio
 import logging  # Add this import for logging
-from pydantic import BaseModel
+from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from openai import OpenAI, RateLimitError
+from pydantic import BaseModel
 
 from src.logger_config import setup_logging
 logger = setup_logging(__name__)
@@ -17,12 +18,20 @@ from src.database_manager import ArticleManager, DatabaseManager
 from src.config import ConfigManager
 from src.analysis_base import ArticleAnalysisMixin
 from src.utils.rate_limiter import RateLimiter
+from src.incident_filter import should_skip_llm, is_incident_article
 
 class RatedArticle(BaseModel):
     """Structured output schema for processed articles."""
-    raw_article_id: int
-    url: str
     relevance_score: float
+    explanation: str = ""
+
+
+@dataclass
+class ProcessingResult:
+    """Result wrapper so callers can distinguish success, irrelevance, and errors."""
+    article: Optional[Dict[str, Any]]
+    status: str  # 'relevant', 'irrelevant', or 'error'
+    error: Optional[str] = None
 
 class ArticleProcessor(ArticleAnalysisMixin):
     def __init__(self, db_manager: DatabaseManager = None, 
@@ -56,10 +65,23 @@ class ArticleProcessor(ArticleAnalysisMixin):
         # Add batch size configuration
         self.batch_size = self.config_manager.get("BATCH_SIZE", 10)
         
-        # Store context message
-        self.context_message = context_message or self.config_manager.get("CHATGPT_CONTEXT_MESSAGE")
+        # Store context message from config first, with optional explicit override.
+        self.context_message = context_message or self.config_manager.get_context_message()
         # Cancellation flag controlled by pipeline/GUI
         self.cancelled = False
+
+    def _render_user_prompt(self, article_text: str) -> str:
+        """Build the user prompt from configured context plus article payload."""
+        context_content = (
+            self.context_message.get("content", "")
+            if isinstance(self.context_message, dict)
+            else str(self.context_message or "")
+        ).strip()
+        return (
+            f"{context_content}\n\n"
+            f"Article:\n"
+            f"{article_text}"
+        )
 
     def cancel(self) -> None:
         """Signal the processor to stop processing new articles."""
@@ -94,16 +116,27 @@ class ArticleProcessor(ArticleAnalysisMixin):
             }
         ]
 
-    async def process_article(self, article: Dict[str, Any], remaining: int) -> Optional[Dict[str, Any]]:
-        """Process a single article"""
+    async def process_article(
+        self,
+        article: Dict[str, Any],
+        remaining: int,
+        attempt: int = 1,
+        max_retries: int = 3,
+    ) -> ProcessingResult:
+        """Process a single article and return a structured result."""
         try:
             if self.cancelled:
                 logger.info("Article processing cancelled before starting item")
-                return None
+                self.error_count += 1
+                return ProcessingResult(article=None, status="error", error="cancelled")
             article_id = article.get('id')
             source = article.get('source', 'Unknown Source')  # Add default source
             if isinstance(source, dict):
                 source = source.get('name', 'Unknown Source')
+            title = article.get("title", "")
+            content = article.get("content", "") or article.get("snippet", "")
+            combined_text = f"{title} {content}"
+            article["incident_level"] = is_incident_article(combined_text)[0]
                 
             logger.info(f"Processing article - ID: {article_id}, URL: {article.get('url', 'No URL')}")
             
@@ -116,29 +149,65 @@ class ArticleProcessor(ArticleAnalysisMixin):
                 if existing:
                     logger.info(f"Using existing relevance score for article {article_id}")
                     article['relevance_score'] = existing[0]['relevance_score']
-                    return article
+                    return ProcessingResult(article=article, status="relevant")
             
             # Continue with regular processing
             logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
-            self.rate_limiter.wait_if_needed()
+
+            # Deterministic pre-filter to avoid unnecessary LLM calls.
+            skip_llm, default_score = should_skip_llm(title, content)
+            if skip_llm:
+                relevance_score = float(default_score if default_score is not None else 0.0)
+                status = "relevant" if relevance_score >= self.RELEVANCE_THRESHOLD else "irrelevant"
+                article["relevance_score"] = relevance_score
+                article["processing_status"] = status
+                article["incident_level"] = False
+                article["explanation"] = "Pre-filtered: missing enforcement or pharma keywords"
+
+                if article_id is not None:
+                    self.article_manager.record_processing_result(
+                        raw_article_id=article_id,
+                        relevance_score=relevance_score,
+                        status=status,
+                    )
+
+                if status == "relevant":
+                    self.relevant += 1
+                    self.max_relevance_score = max(self.max_relevance_score, relevance_score)
+                    self.article_manager.insert_relevant_article(
+                        raw_article_id=article_id,
+                        title=title,
+                        content=content,
+                        source=source,
+                        url=article.get("url", ""),
+                        url_to_image=article.get("url_to_image", ""),
+                        published_at=article.get("published_at", ""),
+                        relevance_score=relevance_score,
+                    )
+                    return ProcessingResult(article=article, status="relevant")
+
+                self.irrelevant += 1
+                return ProcessingResult(article=None, status="irrelevant")
+
+            await self.rate_limiter.wait_if_needed_async()
 
             try:
                 async with self.semaphore:
-                    # Get context data for RAG (if implemented)
-                    context_data = self.get_context_data(article)
+                    article["incident_level"] = True
+                    article_text = (
+                        f"Raw Article ID: {article.get('id', '')}\n"
+                        f"Title: {title}\n"
+                        f"Content: {content}\n"
+                        f"URL: {article.get('url', '')}"
+                    )
                     
                     # Process article through OpenAI API
                     response = self.client.beta.chat.completions.parse(
                         model="gpt-4o-mini",
                         messages=[
-                            self.context_message,
                             {
                                 "role": "user",
-                                "content": 
-                                        f"Raw Article ID: {article.get('id', '')}\n"
-                                        f"Title: {article.get('title', '')}\n"
-                                        f"Content: {article.get('content', '')}\n"
-                                        f"URL: {article.get('url', '')}"
+                                "content": self._render_user_prompt(article_text),
                             }
                         ],
                         max_tokens=250,
@@ -148,11 +217,17 @@ class ArticleProcessor(ArticleAnalysisMixin):
 
                     if not response.choices or not response.choices[0].message:
                         logger.error(f"No response received for article ID: {article.get('id', '')}")
-                        return
+                        self.error_count += 1
+                        return ProcessingResult(
+                            article=None,
+                            status="error",
+                            error="empty response from OpenAI",
+                        )
 
                     # Extract relevance score from response
                     parsed_response = response.choices[0].message.parsed
                     relevance_score = parsed_response.relevance_score
+                    explanation = getattr(parsed_response, "explanation", "")
                     raw_article_id = article.get('id')
                     url = article.get('url')
                     status = "relevant" if relevance_score >= self.RELEVANCE_THRESHOLD else "irrelevant"
@@ -162,6 +237,7 @@ class ArticleProcessor(ArticleAnalysisMixin):
 
                     # Persist the score on the article for downstream consumers
                     article["relevance_score"] = relevance_score
+                    article["explanation"] = explanation
                     article["processing_status"] = status
 
                     if raw_article_id is not None:
@@ -189,58 +265,62 @@ class ArticleProcessor(ArticleAnalysisMixin):
                             relevance_score=relevance_score
                         )
                         logger.info(f"✅ Inserted relevant article '{article.get('title')}' with score {relevance_score}")
+                        return ProcessingResult(article=article, status="relevant")
                     else:
                         self.irrelevant += 1
                         logger.info(f"❌ Article with ID '{raw_article_id}' is not relevant (score: {relevance_score})")
-
-                    # Update total relevant count based on actual relevant count
-                    self.total_relevant = self.relevant
-                    logger.info(f"Total relevant articles: {self.total_relevant}")
-                    logger.info(f"Remaining articles to process: {remaining}")
+                        return ProcessingResult(article=None, status="irrelevant")
 
             except RateLimitError as e:
-                logger.warning(f"Rate limit exceeded: {e}")
-                await asyncio.sleep(10)
+                logger.warning(f"Rate limit exceeded (attempt {attempt}/{max_retries}): {e}")
+                if attempt >= max_retries:
+                    self.error_count += 1
+                    return ProcessingResult(
+                        article=None,
+                        status="error",
+                        error="rate limit exceeded after retries",
+                    )
+                backoff_seconds = min(60, 2 ** attempt)
+                await asyncio.sleep(backoff_seconds)
+                return await self.process_article(
+                    article,
+                    remaining,
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                )
             except Exception as e:
                 logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
+                self.error_count += 1
+                return ProcessingResult(article=None, status="error", error=str(e))
 
         except Exception as e:
             logger.error(f"Error processing article ID {article.get('id', '')}: {e}")
+            self.error_count += 1
+            return ProcessingResult(article=None, status="error", error=str(e))
 
-        # Only return the article if it meets the relevance threshold
-        if article.get("relevance_score", 0) >= self.RELEVANCE_THRESHOLD:
-            return article
-        return None
-
-    async def process_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Process articles in optimized batches"""
+    async def process_articles(self, articles: List[Dict[str, Any]]) -> List[ProcessingResult]:
+        """Process articles in optimized batches and return structured results."""
         try:
-            # Use the actual count of articles being processed for tracking
             total_to_process = len(articles)
             remaining = total_to_process
-            results = []
+            results: List[ProcessingResult] = []
             
             for i in range(0, total_to_process, self.batch_size):
                 batch = articles[i:i + self.batch_size]
                 
                 # Process articles one by one and emit progress after each item
-                batch_results = []
                 for article in batch:
                     if self.cancelled:
                         logger.info("Batch processing cancelled by user")
                         break
                     result = await self.process_article(article, remaining)
-                    if result:
-                        batch_results.append(result)
+                    results.append(result)
                     remaining -= 1
 
                     processed_so_far = total_to_process - remaining
                     if hasattr(self, 'progress_callback'):
                         self.progress_callback(processed_so_far, total_to_process)
                 
-                valid_results = [r for r in batch_results if not isinstance(r, Exception)]
-                results.extend(valid_results)
-
                 if self.cancelled:
                     break
             
@@ -254,7 +334,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)  # Fix logging setup
     try:
         db_manager = DatabaseManager()
-        processor = ArticleProcessor()
+        processor = ArticleProcessor(db_manager=db_manager)
         article_manager = ArticleManager(db_manager)
         articles = article_manager.get_articles()
         
@@ -262,6 +342,8 @@ if __name__ == "__main__":
         results = asyncio.run(processor.process_articles(articles))
 
         if results:
+            relevant_count = len([r for r in results if r.status == "relevant"])
+            error_count = len([r for r in results if r.status == "error"])
             from src.analysis_utils import calculate_relevance_stats, print_analysis_results
             
             analysis_results = calculate_relevance_stats(
@@ -269,7 +351,7 @@ if __name__ == "__main__":
                 processor.irrelevant,
                 processor.max_relevance_score,
             )
-            logger.info(f"Processing completed. Processed {len(results)} articles.")
+            logger.info(f"Processing completed. Processed {len(results)} articles. Relevant: {relevant_count}, Errors: {error_count}")
             print_analysis_results(analysis_results)
         else:
             logger.error("Processing failed")

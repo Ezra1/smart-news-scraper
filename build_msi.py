@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Build an MSI installer using the WiX Toolset."""
+"""Build an MSI installer using the WiX Toolset.
+
+Purpose:
+    Produce a Windows MSI installer from the PyInstaller build.
+
+Usage:
+    python build_msi.py [--skip-build]
+
+Requirements:
+    - Windows with WiX Toolset v3.11 installed at WIX_DIR
+    - pyinstaller available on PATH
+    - smart_news_scraper.spec present in repo root
+
+Examples:
+    python build_msi.py           # build executable then MSI
+    python build_msi.py --skip-build  # reuse existing PyInstaller output
+"""
 import argparse
 import datetime
 import subprocess

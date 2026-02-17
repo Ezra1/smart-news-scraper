@@ -44,7 +44,7 @@ def processor_factory(fake_client):
         processor = ArticleProcessor.__new__(ArticleProcessor)
         processor.RELEVANCE_THRESHOLD = threshold
         processor.client = fake_client(score)
-        processor.rate_limiter = Mock(wait_if_needed=Mock())
+        processor.rate_limiter = Mock(wait_if_needed=Mock(), wait_if_needed_async=Mock())
         processor.semaphore = asyncio.Semaphore(1)
         processor.article_manager = Mock()
         processor.article_manager.insert_relevant_article = Mock()
@@ -54,6 +54,7 @@ def processor_factory(fake_client):
         processor.irrelevant = 0
         processor.total_relevant = 0
         processor.max_relevance_score = 0.0
+        processor.error_count = 0
         processor.context_message = {"role": "system", "content": "test context"}
         return processor
 
@@ -72,7 +73,8 @@ class TestArticleProcessorRelevance:
         result = await processor.process_article(article, remaining=1)
 
         assert result is not None
-        assert result["relevance_score"] == pytest.approx(0.85)
+        assert result.status == "relevant"
+        assert result.article["relevance_score"] == pytest.approx(0.85)
         processor.article_manager.insert_relevant_article.assert_called_once()
         assert (
             processor.article_manager.insert_relevant_article.call_args.kwargs["relevance_score"]
@@ -87,7 +89,8 @@ class TestArticleProcessorRelevance:
 
         result = await processor.process_article(article, remaining=1)
 
-        assert result is None
+        assert result is not None
+        assert result.status == "irrelevant"
         assert article["relevance_score"] == pytest.approx(0.2)
         processor.article_manager.insert_relevant_article.assert_not_called()
 
@@ -100,7 +103,8 @@ class TestArticleProcessorRelevance:
         result = await processor.process_article(article, remaining=1)
 
         assert result is not None
-        assert result["relevance_score"] == pytest.approx(0.7)
+        assert result.status == "relevant"
+        assert result.article["relevance_score"] == pytest.approx(0.7)
         processor.article_manager.insert_relevant_article.assert_called_once()
 
     @pytest.mark.asyncio
