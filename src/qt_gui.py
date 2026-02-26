@@ -25,6 +25,7 @@ from PyQt6.QtGui import QFont, QIcon, QAction
 from pathlib import Path
 from datetime import datetime, timedelta
 import asyncio
+import re
 import sys
 from queue import Queue
 
@@ -49,7 +50,7 @@ class ApiValidationWorker(QThread):
 
     def run(self):
         try:
-            # Validate The News API
+            # Validate Event Registry API
             news_valid = asyncio.run(validate_news_api_key(self.news_key))
             
             # Validate OpenAI API
@@ -574,9 +575,9 @@ class NewsScraperGUI(QMainWindow):
         api_group = QGroupBox("API Configuration")
         api_layout = QVBoxLayout(api_group)
 
-        # The News API
+        # Event Registry API
         news_api_layout = QHBoxLayout()
-        news_api_layout.addWidget(QLabel("The News API Token:"))
+        news_api_layout.addWidget(QLabel("Event Registry API Key:"))
         self.news_api_key = QLineEdit()
         self.news_api_key.setText(self.config_manager.get("NEWS_API_KEY", ""))
         self.news_api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -688,7 +689,7 @@ class NewsScraperGUI(QMainWindow):
             return
             
         if not news_valid:
-            QMessageBox.critical(self, "Error", "Invalid The News API token")
+            QMessageBox.critical(self, "Error", "Invalid Event Registry API key")
             return
         if not openai_valid:
             QMessageBox.critical(self, "Error", "Invalid OpenAI API key")
@@ -1476,14 +1477,92 @@ class NewsScraperGUI(QMainWindow):
         import csv
         
         with open(file_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['title', 'relevance_score', 'url'])
+            writer = csv.DictWriter(
+                f,
+                fieldnames=['title', 'relevance_score', 'url', 'summary']
+            )
             writer.writeheader()
             for result in results:
                 writer.writerow({
                     'title': result.get('title', ''),
                     'relevance_score': f"{result.get('relevance_score', 0):.2f}",
-                    'url': result.get('url', '')
+                    'url': result.get('url', ''),
+                    'summary': self._build_export_summary(result),
                 })
+
+    def _build_export_summary(self, result):
+        """Build a terse one-sentence summary with only critical information."""
+        generic_phrases = (
+            "this article",
+            "passed the relevance filter",
+            "high-priority for review",
+            "merits attention",
+            "related to pharmaceutical security monitoring",
+        )
+
+        def _clean_text(value):
+            text = re.sub(r"\s+", " ", str(value or "")).strip()
+            text = re.sub(r"https?://\S+", "", text).strip()
+            return text
+
+        def _first_sentence(value):
+            text = _clean_text(value)
+            if not text:
+                return ""
+            sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
+            return sentence[:220].rstrip(" ,;:-")
+
+        def _is_generic(value):
+            text = _clean_text(value).lower()
+            return any(phrase in text for phrase in generic_phrases)
+
+        incident_sentence = _first_sentence(result.get('incident_sentence', ''))
+        if incident_sentence and not _is_generic(incident_sentence):
+            return incident_sentence if incident_sentence.endswith(('.', '!', '?')) else f"{incident_sentence}."
+
+        why_it_matters = _first_sentence(result.get('why_it_matters', ''))
+        if why_it_matters and not _is_generic(why_it_matters):
+            return why_it_matters if why_it_matters.endswith(('.', '!', '?')) else f"{why_it_matters}."
+
+        event = _clean_text(result.get('event', ''))
+        who_entities = _clean_text(result.get('who_entities', ''))
+        where_location = _clean_text(result.get('where_location', ''))
+        impact = _clean_text(result.get('impact', ''))
+        urgency = _clean_text(result.get('urgency', ''))
+
+        parts = []
+        if event:
+            parts.append(event)
+        if who_entities:
+            parts.append(f"at {who_entities}")
+        if where_location:
+            parts.append(f"in {where_location}")
+        lead = " ".join(parts).strip()
+        tail_parts = [p for p in (impact, urgency) if p]
+        if lead and tail_parts:
+            sentence = f"{lead}; {'; '.join(tail_parts)}"
+            sentence = sentence[:240].rstrip(" ,;:-")
+            return sentence if sentence.endswith(('.', '!', '?')) else f"{sentence}."
+
+        explanation = _clean_text(result.get('explanation', ''))
+        if explanation and not _is_generic(explanation):
+            sentence = _first_sentence(explanation)
+            sentence = re.sub(r"^(this article|the article)\s+", "", sentence, flags=re.IGNORECASE).strip()
+            if sentence:
+                return sentence if sentence.endswith(('.', '!', '?')) else f"{sentence}."
+
+        # Headline is usually the most information-dense summary for end users.
+        title = _clean_text(result.get('title', ''))
+        if title and title.lower() != "no title":
+            title = re.sub(r"\s+-\s+(reuters|ap|bloomberg|cnbc|wsj|ft)$", "", title, flags=re.IGNORECASE)
+            return title if title.endswith(('.', '!', '?')) else f"{title}."
+
+        # Fallback to first content sentence when title is unavailable.
+        content = _first_sentence(result.get('content', '') or result.get('snippet', ''))
+        if content:
+            return content if content.endswith(('.', '!', '?')) else f"{content}."
+
+        return "Relevant pharmaceutical security update."
 
     def _export_to_json(self, file_path, results):
         """Export results to JSON format"""
@@ -1499,6 +1578,7 @@ class NewsScraperGUI(QMainWindow):
                 f.write(f"Title: {result.get('title', '')}\n")
                 f.write(f"Relevance: {result.get('relevance_score', 0):.2f}\n")
                 f.write(f"URL: {result.get('url', '')}\n")
+                f.write(f"Summary: {self._build_export_summary(result)}\n")
                 f.write("-" * 80 + "\n")
 
     def _update_results(self, results):

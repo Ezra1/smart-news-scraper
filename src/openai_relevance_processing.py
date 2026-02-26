@@ -24,6 +24,13 @@ class RatedArticle(BaseModel):
     """Structured output schema for processed articles."""
     relevance_score: float
     explanation: str = ""
+    event: str = ""
+    who_entities: str = ""
+    where_location: str = ""
+    impact: str = ""
+    urgency: str = ""
+    why_it_matters: str = ""
+    confidence_notes: str = ""
 
 
 @dataclass
@@ -143,12 +150,26 @@ class ArticleProcessor(ArticleAnalysisMixin):
             # Get existing processing result if available
             if article_id:
                 existing = self.db_manager.execute_query(
-                    "SELECT relevance_score FROM relevant_articles WHERE raw_article_id = ?", 
+                    """
+                    SELECT relevance_score, explanation, event, who_entities, where_location,
+                           impact, urgency, why_it_matters, incident_sentence, event_type_uri
+                    FROM relevant_articles
+                    WHERE raw_article_id = ?
+                    """,
                     (article_id,)
                 )
                 if existing:
                     logger.info(f"Using existing relevance score for article {article_id}")
                     article['relevance_score'] = existing[0]['relevance_score']
+                    article['explanation'] = existing[0].get('explanation', '')
+                    article['event'] = existing[0].get('event', '')
+                    article['who_entities'] = existing[0].get('who_entities', '')
+                    article['where_location'] = existing[0].get('where_location', '')
+                    article['impact'] = existing[0].get('impact', '')
+                    article['urgency'] = existing[0].get('urgency', '')
+                    article['why_it_matters'] = existing[0].get('why_it_matters', '')
+                    article['incident_sentence'] = existing[0].get('incident_sentence', '')
+                    article['event_type_uri'] = existing[0].get('event_type_uri', '')
                     return ProcessingResult(article=article, status="relevant")
             
             # Continue with regular processing
@@ -163,12 +184,14 @@ class ArticleProcessor(ArticleAnalysisMixin):
                 article["processing_status"] = status
                 article["incident_level"] = False
                 article["explanation"] = "Pre-filtered: missing enforcement or pharma keywords"
+                article["why_it_matters"] = ""
 
                 if article_id is not None:
                     self.article_manager.record_processing_result(
                         raw_article_id=article_id,
                         relevance_score=relevance_score,
                         status=status,
+                        explanation=article["explanation"],
                     )
 
                 if status == "relevant":
@@ -198,7 +221,14 @@ class ArticleProcessor(ArticleAnalysisMixin):
                         f"Raw Article ID: {article.get('id', '')}\n"
                         f"Title: {title}\n"
                         f"Content: {content}\n"
-                        f"URL: {article.get('url', '')}"
+                        f"URL: {article.get('url', '')}\n"
+                        f"Event URI: {article.get('event_uri', '')}\n"
+                        f"Event Type URI: {article.get('event_type_uri', '')}\n"
+                        f"Incident Sentence: {article.get('incident_sentence', '')}\n"
+                        f"Location Metadata: {article.get('location', '')}\n"
+                        f"Categories Metadata: {article.get('categories', '')}\n"
+                        f"Concepts Metadata: {article.get('concepts', '')}\n"
+                        f"Extracted Dates Metadata: {article.get('extracted_dates', '')}"
                     )
                     
                     # Process article through OpenAI API
@@ -228,6 +258,12 @@ class ArticleProcessor(ArticleAnalysisMixin):
                     parsed_response = response.choices[0].message.parsed
                     relevance_score = parsed_response.relevance_score
                     explanation = getattr(parsed_response, "explanation", "")
+                    event = getattr(parsed_response, "event", "")
+                    who_entities = getattr(parsed_response, "who_entities", "")
+                    where_location = getattr(parsed_response, "where_location", "")
+                    impact = getattr(parsed_response, "impact", "")
+                    urgency = getattr(parsed_response, "urgency", "")
+                    why_it_matters = getattr(parsed_response, "why_it_matters", "")
                     raw_article_id = article.get('id')
                     url = article.get('url')
                     status = "relevant" if relevance_score >= self.RELEVANCE_THRESHOLD else "irrelevant"
@@ -238,6 +274,12 @@ class ArticleProcessor(ArticleAnalysisMixin):
                     # Persist the score on the article for downstream consumers
                     article["relevance_score"] = relevance_score
                     article["explanation"] = explanation
+                    article["event"] = event
+                    article["who_entities"] = who_entities
+                    article["where_location"] = where_location
+                    article["impact"] = impact
+                    article["urgency"] = urgency
+                    article["why_it_matters"] = why_it_matters
                     article["processing_status"] = status
 
                     if raw_article_id is not None:
@@ -245,6 +287,15 @@ class ArticleProcessor(ArticleAnalysisMixin):
                             raw_article_id=raw_article_id,
                             relevance_score=relevance_score,
                             status=status,
+                            explanation=explanation,
+                            event=event,
+                            who_entities=who_entities,
+                            where_location=where_location,
+                            impact=impact,
+                            urgency=urgency,
+                            why_it_matters=why_it_matters,
+                            incident_sentence=article.get("incident_sentence", ""),
+                            event_type_uri=article.get("event_type_uri", ""),
                         )
 
                     # Process and store relevant articles
@@ -262,7 +313,16 @@ class ArticleProcessor(ArticleAnalysisMixin):
                             url=url,
                             url_to_image=article.get('url_to_image', ''),
                             published_at=article.get('published_at', ''),
-                            relevance_score=relevance_score
+                            relevance_score=relevance_score,
+                            explanation=explanation,
+                            event=event,
+                            who_entities=who_entities,
+                            where_location=where_location,
+                            impact=impact,
+                            urgency=urgency,
+                            why_it_matters=why_it_matters,
+                            incident_sentence=article.get("incident_sentence", ""),
+                            event_type_uri=article.get("event_type_uri", ""),
                         )
                         logger.info(f"✅ Inserted relevant article '{article.get('title')}' with score {relevance_score}")
                         return ProcessingResult(article=article, status="relevant")

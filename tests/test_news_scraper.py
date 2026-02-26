@@ -10,7 +10,15 @@ class MockConfig:
         values = {
             "NEWS_API_KEY": "api-key",
             "NEWS_API_URL": "http://example.com",
+            "EVENT_REGISTRY_MENTIONS_URL": "http://example.com/mentions",
             "NEWS_API_REQUESTS_PER_SECOND": 1,
+            "EVENT_REGISTRY_ARTICLES_COUNT": 50,
+            "EVENT_REGISTRY_MENTIONS_COUNT": 100,
+            "EVENT_REGISTRY_SOURCE_RANK_START": 0,
+            "EVENT_REGISTRY_SOURCE_RANK_END": 50,
+            "EVENT_REGISTRY_DUPLICATE_FILTER": "skipDuplicates",
+            "EVENT_REGISTRY_MIN_BODY_LENGTH": 600,
+            "EVENT_REGISTRY_ENABLE_URL_FALLBACK": False,
         }
         return values.get(key, default)
 
@@ -31,7 +39,7 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, response):
         self.response = response
-        self.last_params = None
+        self.last_json = None
 
     async def __aenter__(self):
         return self
@@ -39,8 +47,8 @@ class FakeSession:
     async def __aexit__(self, exc_type, exc, tb):
         pass
 
-    def get(self, *args, **kwargs):
-        self.last_params = kwargs.get("params")
+    def post(self, *args, **kwargs):
+        self.last_json = kwargs.get("json")
         @asynccontextmanager
         async def cm():
             yield self.response
@@ -53,7 +61,7 @@ def scraper():
 
 
 def test_make_api_request_success(monkeypatch, scraper):
-    response = FakeResponse(200, {"data": [{"title": "A"}]})
+    response = FakeResponse(200, {"articles": {"results": [{"title": "A"}]}})
 
     def client_session(*args, **kwargs):
         return FakeSession(response)
@@ -78,7 +86,7 @@ def test_make_api_request_rate_limit(monkeypatch, scraper):
 
 
 def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
-    response = FakeResponse(200, {"data": {"general": [{"title": "B"}]}})
+    response = FakeResponse(200, {"articles": {"results": [{"title": "B"}]}})
     sessions = []
 
     def client_session(*args, **kwargs):
@@ -90,9 +98,10 @@ def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
 
     results = asyncio.run(scraper._fetch_for_term("term"))
     assert results == [{"title": "B"}]
-    assert "term" in sessions[0].last_params["search"]
-    assert "-opinion" in sessions[0].last_params["search"]
-    assert sessions[0].last_params["api_token"] == "api-key"
+    assert "term" in sessions[0].last_json["keyword"]
+    assert "-opinion" in sessions[0].last_json["keyword"]
+    assert sessions[0].last_json["apiKey"] == "api-key"
+    assert sessions[0].last_json["isDuplicateFilter"] == "skipDuplicates"
 
 
 def test_build_search_query_includes_base_terms(scraper):

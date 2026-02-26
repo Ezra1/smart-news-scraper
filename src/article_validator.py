@@ -204,6 +204,27 @@ class ArticleValidator:
                     logger.error(f"Invalid published date: {article.get('published_at')}")
                     return None
                     
+            # Keep optional enrichment metadata for downstream relevance/explainer steps.
+            passthrough_fields = [
+                "source",
+                "description",
+                "snippet",
+                "search_term_id",
+                "incident_level",
+                "event_uri",
+                "concepts",
+                "categories",
+                "location",
+                "extracted_dates",
+                "incident_sentence",
+                "event_type_uri",
+                "source_rank_percentile",
+                "full_text",
+                "body_source",
+                "url_fallback_status",
+                "image_url",
+            ]
+
             # Construct cleaned article
             cleaned_article = {
                 'title': title,
@@ -211,8 +232,12 @@ class ArticleValidator:
                 'url': url,
                 'published_at': published_at,
                 'source_name': self.clean_text(article.get('source_name', '')),
-                'url_to_image': url_to_image
+                'url_to_image': url_to_image,
             }
+
+            for field in passthrough_fields:
+                if field in article:
+                    cleaned_article[field] = article.get(field)
             
             logger.info(f"Article cleaned successfully: {title}")
             return cleaned_article

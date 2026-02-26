@@ -3,6 +3,7 @@
 import os
 import sys
 import sqlite3
+import json
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
@@ -163,6 +164,17 @@ class DatabaseManager:
                 url TEXT UNIQUE NOT NULL,
                 url_to_image TEXT,
                 published_at TIMESTAMP NOT NULL,
+                event_uri TEXT,
+                concepts TEXT,
+                categories TEXT,
+                location TEXT,
+                extracted_dates TEXT,
+                incident_sentence TEXT,
+                event_type_uri TEXT,
+                source_rank_percentile INTEGER,
+                full_text TEXT,
+                body_source TEXT,
+                url_fallback_status TEXT,
                 scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (search_term_id) REFERENCES search_terms (id)
             )''',
@@ -176,6 +188,15 @@ class DatabaseManager:
                 url TEXT UNIQUE NOT NULL,
                 url_to_image TEXT,
                 published_at TIMESTAMP NOT NULL,
+                explanation TEXT,
+                event TEXT,
+                who_entities TEXT,
+                where_location TEXT,
+                impact TEXT,
+                urgency TEXT,
+                why_it_matters TEXT,
+                incident_sentence TEXT,
+                event_type_uri TEXT,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (raw_article_id) REFERENCES raw_articles (id)
             )''',
@@ -184,6 +205,15 @@ class DatabaseManager:
                 raw_article_id INTEGER UNIQUE,
                 relevance_score REAL CHECK (relevance_score >= 0 AND relevance_score <= 1),
                 status TEXT NOT NULL CHECK (status IN ('relevant','irrelevant')),
+                explanation TEXT,
+                event TEXT,
+                who_entities TEXT,
+                where_location TEXT,
+                impact TEXT,
+                urgency TEXT,
+                why_it_matters TEXT,
+                incident_sentence TEXT,
+                event_type_uri TEXT,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (raw_article_id) REFERENCES raw_articles (id)
             )'''
@@ -194,11 +224,60 @@ class DatabaseManager:
             try:
                 for query in queries:
                     cur.execute(query)
+                self._ensure_schema_columns(conn)
                 conn.commit()
             except sqlite3.Error as e:
                 conn.rollback()
                 logger.error(f"Error creating database tables: {e}")
                 raise
+
+    def _ensure_schema_columns(self, conn):
+        """Best-effort migration for newly added optional columns."""
+        optional_columns = {
+            "raw_articles": {
+                "event_uri": "TEXT",
+                "concepts": "TEXT",
+                "categories": "TEXT",
+                "location": "TEXT",
+                "extracted_dates": "TEXT",
+                "incident_sentence": "TEXT",
+                "event_type_uri": "TEXT",
+                "source_rank_percentile": "INTEGER",
+                "full_text": "TEXT",
+                "body_source": "TEXT",
+                "url_fallback_status": "TEXT",
+            },
+            "relevant_articles": {
+                "explanation": "TEXT",
+                "event": "TEXT",
+                "who_entities": "TEXT",
+                "where_location": "TEXT",
+                "impact": "TEXT",
+                "urgency": "TEXT",
+                "why_it_matters": "TEXT",
+                "incident_sentence": "TEXT",
+                "event_type_uri": "TEXT",
+            },
+            "processing_results": {
+                "explanation": "TEXT",
+                "event": "TEXT",
+                "who_entities": "TEXT",
+                "where_location": "TEXT",
+                "impact": "TEXT",
+                "urgency": "TEXT",
+                "why_it_matters": "TEXT",
+                "incident_sentence": "TEXT",
+                "event_type_uri": "TEXT",
+            },
+        }
+
+        cur = conn.cursor()
+        for table, columns in optional_columns.items():
+            cur.execute(f"PRAGMA table_info({table})")
+            existing = {row[1] for row in cur.fetchall()}
+            for column, column_def in columns.items():
+                if column not in existing:
+                    cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_def}")
 
 class ArticleManager:
     """Handles article-related database operations with enhanced safety"""
@@ -256,12 +335,28 @@ class ArticleManager:
                     article_data.get('url_to_image', '')
                     or article_data.get('image_url', '')
                     or article_data.get('urlToImage', '')
-                )
+                ),
+                'event_uri': article_data.get('event_uri', ''),
+                'concepts': article_data.get('concepts', ''),
+                'categories': article_data.get('categories', ''),
+                'location': article_data.get('location', ''),
+                'extracted_dates': article_data.get('extracted_dates', ''),
+                'incident_sentence': article_data.get('incident_sentence', ''),
+                'event_type_uri': article_data.get('event_type_uri', ''),
+                'source_rank_percentile': article_data.get('source_rank_percentile'),
+                'full_text': article_data.get('full_text', ''),
+                'body_source': article_data.get('body_source', ''),
+                'url_fallback_status': article_data.get('url_fallback_status', ''),
             }
             
             # Process source field
-            source = article_data.get('source', '')
+            source = article_data.get('source', '') or article_data.get('source_name', '')
             data['source'] = source.get('name') if isinstance(source, dict) else str(source)
+
+            # Normalize JSON-like metadata so sqlite gets a plain TEXT payload.
+            for key in ['concepts', 'categories', 'location', 'extracted_dates']:
+                if isinstance(data[key], (dict, list)):
+                    data[key] = json.dumps(data[key], ensure_ascii=False)
             
             # Validate required fields
             if not all(data[key] for key in ['title', 'content', 'url']):
@@ -281,13 +376,19 @@ class ArticleManager:
             # Insert new article
             query = """
                 INSERT INTO raw_articles 
-                (title, content, source, url, url_to_image, published_at, search_term_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (title, content, source, url, url_to_image, published_at, search_term_id,
+                 event_uri, concepts, categories, location, extracted_dates, incident_sentence,
+                 event_type_uri, source_rank_percentile, full_text, body_source, url_fallback_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             values = (
                 data['title'], data['content'], data['source'],
                 data['url'], data['url_to_image'], data['published_at'],
-                data['search_term_id']
+                data['search_term_id'], data['event_uri'], data['concepts'],
+                data['categories'], data['location'], data['extracted_dates'],
+                data['incident_sentence'], data['event_type_uri'],
+                data['source_rank_percentile'], data['full_text'],
+                data['body_source'], data['url_fallback_status'],
             )
             
             result = self.db_manager.execute_query(query, values)
@@ -322,7 +423,26 @@ class ArticleManager:
         # Return the first item if result exists, otherwise None
         return result[0] if result else None
 
-    def insert_relevant_article(self, raw_article_id: int, title: str, content: str, source: str, url: str, url_to_image: str, published_at: str, relevance_score: float) -> bool:
+    def insert_relevant_article(
+        self,
+        raw_article_id: int,
+        title: str,
+        content: str,
+        source: str,
+        url: str,
+        url_to_image: str,
+        published_at: str,
+        relevance_score: float,
+        explanation: str = "",
+        event: str = "",
+        who_entities: str = "",
+        where_location: str = "",
+        impact: str = "",
+        urgency: str = "",
+        why_it_matters: str = "",
+        incident_sentence: str = "",
+        event_type_uri: str = "",
+    ) -> bool:
         """
         Insert an article into the relevant_articles table with duplication checking.
         
@@ -364,10 +484,30 @@ class ArticleManager:
             query = """
                 INSERT INTO relevant_articles (
                     raw_article_id, title, content, source, url, 
-                    url_to_image, published_at, relevance_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    url_to_image, published_at, relevance_score, explanation, event,
+                    who_entities, where_location, impact, urgency, why_it_matters,
+                    incident_sentence, event_type_uri
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
-            params = (raw_article_id, title, content, source, url, url_to_image, published_at, relevance_score)
+            params = (
+                raw_article_id,
+                title,
+                content,
+                source,
+                url,
+                url_to_image,
+                published_at,
+                relevance_score,
+                explanation,
+                event,
+                who_entities,
+                where_location,
+                impact,
+                urgency,
+                why_it_matters,
+                incident_sentence,
+                event_type_uri,
+            )
             self.db_manager.execute_query(query, params)
             return True
             
@@ -375,7 +515,21 @@ class ArticleManager:
             logger.error(f"Error inserting relevant article: {e}")
             return False
             
-    def record_processing_result(self, raw_article_id: int, relevance_score: float, status: str) -> bool:
+    def record_processing_result(
+        self,
+        raw_article_id: int,
+        relevance_score: float,
+        status: str,
+        explanation: str = "",
+        event: str = "",
+        who_entities: str = "",
+        where_location: str = "",
+        impact: str = "",
+        urgency: str = "",
+        why_it_matters: str = "",
+        incident_sentence: str = "",
+        event_type_uri: str = "",
+    ) -> bool:
         """Record processing outcome for any article, including irrelevants."""
         try:
             if status not in {"relevant", "irrelevant"}:
@@ -383,14 +537,43 @@ class ArticleManager:
                 return False
 
             query = """
-                INSERT INTO processing_results (raw_article_id, relevance_score, status)
-                VALUES (?, ?, ?)
+                INSERT INTO processing_results (
+                    raw_article_id, relevance_score, status, explanation, event,
+                    who_entities, where_location, impact, urgency, why_it_matters,
+                    incident_sentence, event_type_uri
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(raw_article_id) DO UPDATE SET
                     relevance_score = excluded.relevance_score,
                     status = excluded.status,
+                    explanation = excluded.explanation,
+                    event = excluded.event,
+                    who_entities = excluded.who_entities,
+                    where_location = excluded.where_location,
+                    impact = excluded.impact,
+                    urgency = excluded.urgency,
+                    why_it_matters = excluded.why_it_matters,
+                    incident_sentence = excluded.incident_sentence,
+                    event_type_uri = excluded.event_type_uri,
                     processed_at = CURRENT_TIMESTAMP
             """
-            self.db_manager.execute_query(query, (raw_article_id, relevance_score, status))
+            self.db_manager.execute_query(
+                query,
+                (
+                    raw_article_id,
+                    relevance_score,
+                    status,
+                    explanation,
+                    event,
+                    who_entities,
+                    where_location,
+                    impact,
+                    urgency,
+                    why_it_matters,
+                    incident_sentence,
+                    event_type_uri,
+                ),
+            )
             return True
         except Exception as e:
             logger.error(f"Error recording processing result: {e}")

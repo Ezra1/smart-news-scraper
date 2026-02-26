@@ -20,7 +20,9 @@ DEFAULT_CONTEXT_MESSAGE = {
         "HIGH SCORE (0.8-1.0): confirmed enforcement events like seizures, arrests, "
         "raids, and regulatory recalls/enforcement against unauthorized medicines. "
         "LOW SCORE (0.0-0.4): policy/trend commentary, cybersecurity-only stories, "
-        "or non-pharma content. Return strict JSON with relevance_score and explanation."
+        "or non-pharma content. Return strict JSON with relevance_score, explanation, "
+        "event, who_entities, where_location, impact, urgency, and why_it_matters. "
+        "Keep fields factual, concise, and specific to the provided evidence."
     ),
 }
 
@@ -28,9 +30,17 @@ DEFAULT_CONTEXT_MESSAGE = {
 DEFAULT_CONFIG = {
     "NEWS_API_KEY": "",
     "OPENAI_API_KEY": "",
-    "NEWS_API_URL": "https://api.thenewsapi.com/v1/news/all",
+    "NEWS_API_URL": "https://eventregistry.org/api/v1/article/getArticles",
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
+    "EVENT_REGISTRY_MENTIONS_URL": "https://eventregistry.org/api/v1/article/getMentions",
+    "EVENT_REGISTRY_ARTICLES_COUNT": 100,
+    "EVENT_REGISTRY_MENTIONS_COUNT": 100,
+    "EVENT_REGISTRY_SOURCE_RANK_START": 0,
+    "EVENT_REGISTRY_SOURCE_RANK_END": 50,
+    "EVENT_REGISTRY_DUPLICATE_FILTER": "skipDuplicates",
+    "EVENT_REGISTRY_MIN_BODY_LENGTH": 600,
+    "EVENT_REGISTRY_ENABLE_URL_FALLBACK": True,
     "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
     "DATE_RANGE_MODE": "preset",
@@ -44,7 +54,7 @@ DEFAULT_CONFIG = {
     "OUTPUT_DIR": "output",
 }
 
-EXPECTED_API_URL = "https://api.thenewsapi.com/v1/news/all"
+EXPECTED_API_URL = "https://eventregistry.org/api/v1/article/getArticles"
 EXPECTED_DB_PATH = "data/news_articles.db"
 EXPECTED_THRESHOLD = 0.7
 
@@ -193,7 +203,12 @@ class ConfigManager:
             "NEWS_API_REQUESTS_PER_SECOND": int,
             "OPENAI_REQUESTS_PER_MINUTE": int,
             "BATCH_SIZE": int,
-            "RELEVANCE_THRESHOLD": float
+            "RELEVANCE_THRESHOLD": float,
+            "EVENT_REGISTRY_ARTICLES_COUNT": int,
+            "EVENT_REGISTRY_MENTIONS_COUNT": int,
+            "EVENT_REGISTRY_SOURCE_RANK_START": int,
+            "EVENT_REGISTRY_SOURCE_RANK_END": int,
+            "EVENT_REGISTRY_MIN_BODY_LENGTH": int,
         }
         
         # First load from environment
@@ -361,6 +376,18 @@ class ConfigManager:
 
             if self.config.get("OPENAI_REQUESTS_PER_MINUTE", 0) < 0:
                 logger.error("OPENAI_REQUESTS_PER_MINUTE must be positive")
+                return False
+
+            source_rank_start = int(self.config.get("EVENT_REGISTRY_SOURCE_RANK_START", 0))
+            source_rank_end = int(self.config.get("EVENT_REGISTRY_SOURCE_RANK_END", 100))
+            if not (0 <= source_rank_start <= 90 and source_rank_start % 10 == 0):
+                logger.error("EVENT_REGISTRY_SOURCE_RANK_START must be 0-90 and divisible by 10")
+                return False
+            if not (10 <= source_rank_end <= 100 and source_rank_end % 10 == 0):
+                logger.error("EVENT_REGISTRY_SOURCE_RANK_END must be 10-100 and divisible by 10")
+                return False
+            if source_rank_start >= source_rank_end:
+                logger.error("EVENT_REGISTRY_SOURCE_RANK_START must be less than EVENT_REGISTRY_SOURCE_RANK_END")
                 return False
 
             # Batch size validation
