@@ -4,6 +4,7 @@ import json
 import platform
 import uuid
 import hashlib
+import stat
 from pathlib import Path
 from typing import Dict, Any, List
 from cryptography.fernet import Fernet
@@ -127,12 +128,21 @@ class ConfigManager:
         
         Uses a more secure approach with a random salt stored in a separate file.
         """
-        key_file = Path(self.keys_path + ".key")
         salt_file = Path(self.keys_path + ".salt")
-        
-        # If key already exists, return it
-        if key_file.exists() and salt_file.exists():
-            return key_file.read_bytes()
+        legacy_key_file = Path(self.keys_path + ".key")
+
+        if legacy_key_file.exists():
+            try:
+                legacy_key_file.unlink()
+                logger.info("Removed legacy encryption key file at %s", legacy_key_file)
+            except OSError:
+                logger.warning("Could not remove legacy key file at %s", legacy_key_file)
+ 
+        # If salt already exists, derive a deterministic key for this machine.
+        # We intentionally do not persist the derived key on disk.
+        if salt_file.exists():
+            salt = salt_file.read_bytes()
+            return self._derive_encryption_key(salt)
         
         # Generate new key with random salt
 
@@ -140,6 +150,16 @@ class ConfigManager:
         salt = os.urandom(16)
         salt_file.write_bytes(salt)
 
+        # Restrict file permissions when possible.
+        try:
+            os.chmod(salt_file, stat.S_IRUSR | stat.S_IWUSR)
+        except OSError:
+            logger.debug("Could not set strict permissions on %s", salt_file)
+
+        return self._derive_encryption_key(salt)
+
+    def _derive_encryption_key(self, salt: bytes) -> bytes:
+        """Derive a stable encryption key from machine-bound metadata and optional secret."""
         # Use machine-specific information as a base for the password
         # This isn't perfect security but better than a hardcoded password
         try:
@@ -150,19 +170,21 @@ class ConfigManager:
         if not nodename:
             nodename = hex(uuid.getnode())
 
-        machine_id = hashlib.md5(nodename.encode()).hexdigest()
+        machine_id = hashlib.sha256(nodename.encode()).hexdigest()
+
+        # Optional hardening hook for deployments.
+        # If this is set, encrypted key files become unreadable without the secret.
+        extra_secret = os.getenv("NEWS_SCRAPER_MASTER_KEY", "")
+        password_material = f"{machine_id}:{extra_secret}".encode()
         
         # Derive key using PBKDF2
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=100000,
+            iterations=390000,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(machine_id.encode()))
-        key_file.write_bytes(key)
-        
-        return key
+        return base64.urlsafe_b64encode(kdf.derive(password_material))
 
     def _save_api_keys(self, keys: dict):
         """Save API keys encrypted."""
@@ -193,11 +215,8 @@ class ConfigManager:
         """Load configuration with secure handling of credentials"""
         config = {}
         
-        # Load saved API keys first
-        api_keys = self._load_api_keys()
-        config.update(api_keys)
-        
-        # Load from environment variables first with type conversion
+        # Load from environment variables with type conversion. Environment values are
+        # treated as highest-precedence and merged last.
         type_map = {
             "NEWS_API_DAILY_LIMIT": int,
             "NEWS_API_REQUESTS_PER_SECOND": int,
@@ -211,18 +230,18 @@ class ConfigManager:
             "EVENT_REGISTRY_MIN_BODY_LENGTH": int,
         }
         
-        # First load from environment
+        env_config = {}
         for key in DEFAULT_CONFIG:
             env_value = os.getenv(f"NEWS_SCRAPER_{key}")
             if env_value:
                 try:
                     if key in type_map:
-                        config[key] = type_map[key](env_value)
+                        env_config[key] = type_map[key](env_value)
                     else:
-                        config[key] = env_value
+                        env_config[key] = env_value
                 except (ValueError, TypeError) as e:
                     logger.error(f"Error converting environment variable {key}: {e}")
-                    config[key] = DEFAULT_CONFIG[key]
+                    env_config[key] = DEFAULT_CONFIG[key]
 
         # Then load from file, allowing file values to override env vars
         if os.path.exists(self.config_path):
@@ -235,6 +254,12 @@ class ConfigManager:
         else:
             # Create default config file if it doesn't exist
             self.save_config(DEFAULT_CONFIG)
+
+        # Load encrypted API keys.
+        config.update(self._load_api_keys())
+
+        # Environment has final precedence.
+        config.update(env_config)
 
         # Fill in any missing values from defaults
         for key, value in DEFAULT_CONFIG.items():
@@ -320,12 +345,14 @@ class ConfigManager:
                 self._save_api_keys(api_keys)
             
             # Save rest of config without API keys
-            safe_config = {k: v for k, v in config.items() if k not in api_keys}
+            sensitive_keys = {"NEWS_API_KEY", "OPENAI_API_KEY"}
+            safe_config = {k: v for k, v in config.items() if k not in sensitive_keys}
             with open(self.config_path, 'w', encoding="utf-8") as f:
                 json.dump(safe_config, f, indent=4)
                 
             # Update running config
-            self.config.update(config)
+            if hasattr(self, "config") and isinstance(self.config, dict):
+                self.config.update(config)
             
             logger.info("Config and API keys saved successfully")
             

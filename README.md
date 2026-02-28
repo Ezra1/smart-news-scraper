@@ -36,17 +36,17 @@ A modern application for scraping, analyzing, and managing news articles based o
    pip install -r requirements.txt
    ```
 
-3. Set up configuration:
+3. Set up configuration securely (recommended):
    ```bash
-   # Copy the template and add your API keys
    cp config/config.template.json config/config.json
-   # Then edit config/config.json and enter your keys, e.g.:
-   {
-     "NEWS_API_KEY": "your_thenewsapi_token_here",
-     "OPENAI_API_KEY": "your_openai_api_key_here",
-     "RELEVANCE_THRESHOLD": 0.7
-   }
+   export NEWS_SCRAPER_NEWS_API_KEY="your_thenewsapi_token_here"
+   export NEWS_SCRAPER_OPENAI_API_KEY="your_openai_api_key_here"
+   # Optional hardening for encrypted local key storage:
+   export NEWS_SCRAPER_MASTER_KEY="a-strong-random-passphrase"
    ```
+
+   The app will read API keys from environment variables first. If you save keys
+   through the GUI, they are encrypted and stored outside `config.json`.
 
 ### Usage
 
@@ -95,8 +95,9 @@ The GUI provides:
 | CHATGPT_CONTEXT_MESSAGE | System prompt for OpenAI | Custom relevance instructions |
 
 Configuration is stored in `config/config.json` (create this file by copying
-`config/config.template.json` and updating your keys). API keys are stored
-securely using encryption.
+`config/config.template.json` and updating non-secret values). API keys are
+loaded from environment variables when present and are never written to
+`config.json`.
 
 ## Architecture
 
