@@ -19,8 +19,8 @@ ENV/
 !.env.example
 config/.api_keys
 config/.api_keys.*
-!.api_keys.example
 .api_keys*
+!.api_keys.example
 config/config.json
 
 # Logs

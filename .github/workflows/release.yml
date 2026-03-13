@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install WiX Toolset
+        run: choco install wixtoolset --no-progress -y
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+            $version = $env:GITHUB_REF_NAME
+            if ($version.StartsWith("v")) {
+              $version = $version.Substring(1)
+            }
+          } else {
+            $version = Get-Date -Format "yyyyMMdd"
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Release version: $version"
+
+      - name: Build ZIP distribution
+        run: python build_installer.py --version ${{ env.RELEASE_VERSION }}
+
+      - name: Build MSI installer
+        run: python build_msi.py --skip-build --version ${{ env.RELEASE_VERSION }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.RELEASE_VERSION }}
+          name: Smart News Scraper v${{ env.RELEASE_VERSION }}
+          make_latest: true
+          files: |
+            SmartNewsScraper_v${{ env.RELEASE_VERSION }}.zip
+            installer/SmartNewsScraper_v${{ env.RELEASE_VERSION }}.msi

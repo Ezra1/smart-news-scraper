@@ -6,13 +6,37 @@ This document provides instructions for installing and running the Smart News Sc
 
 ### Option 1: Using the ZIP Installer (Recommended)
 
-1. Download the ZIP installer (`SmartNewsScraper_v[DATE].zip`)
-2. Extract the ZIP file to a location of your choice
-3. Run `SmartNewsScraper.exe` from the extracted folder to open the GUI
+1. Open the latest release page: https://github.com/Ezra1/smart-news-scraper/releases/latest
+2. Download `SmartNewsScraper_v<version>.zip`
+3. Extract the ZIP file to a location of your choice
+4. Run `SmartNewsScraper.exe` from the extracted folder to open the GUI
 
-### Option 2: Using the Standalone Executable
+### Option 2: Using the MSI Installer
 
-1. Download the standalone executable (`SmartNewsScraper.exe`)
+1. Open the latest release page: https://github.com/Ezra1/smart-news-scraper/releases/latest
+2. Download `SmartNewsScraper_v<version>.msi`
+3. Run the installer and follow the setup wizard
+4. Launch Smart News Scraper from the Start Menu or desktop shortcut
+
+### Option 3: Running from Source (Developers)
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Ezra1/smart-news-scraper.git
+   cd smart-news-scraper
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Launch the GUI:
+   ```bash
+   python gui_main.py
+   ```
+
+### Option 4: Using the Standalone Executable
+
+1. Download `SmartNewsScraper.exe` from a release asset if provided
 2. Place it in a folder of your choice
 3. Run the executable to open the GUI
 
@@ -58,8 +82,8 @@ When you run the application for the first time:
 ### Getting Help
 
 If you encounter any issues not covered here, please:
-1. Check the README.md file for additional information
-2. Contact support at support@example.com
+1. Check `README.md` for setup and troubleshooting details
+2. Open an issue: https://github.com/Ezra1/smart-news-scraper/issues
 
 ## Uninstallation
 

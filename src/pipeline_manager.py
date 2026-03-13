@@ -1,5 +1,6 @@
 from typing import List, Callable, Optional
 from src.news_scraper import NewsArticleScraper
+from src.candidate_filter import CandidateFilter
 from src.openai_relevance_processing import ArticleProcessor
 from src.article_validator import ArticleValidator
 from src.database_manager import DatabaseManager
@@ -44,7 +45,8 @@ class PipelineManager:
         """
         self.db_manager = db_manager or DatabaseManager()
         self.config_manager = config_manager or ConfigManager()
-        self.context_message = self.config_manager.get_context_message()
+        get_context = getattr(self.config_manager, "get_context_message", None)
+        self.context_message = get_context() if callable(get_context) else {}
         # Default to no-op callbacks so headless/CLI usage does not raise
         self.progress_callback = lambda current, total: None
         self.status_callback = (
@@ -53,6 +55,7 @@ class PipelineManager:
         self.scraper = scraper or NewsArticleScraper(
             self.config_manager, db_manager=self.db_manager
         )
+        self.candidate_filter = CandidateFilter(self.config_manager, db_manager=self.db_manager)
         self.processor = None
         self.validator = validator or ArticleValidator()
         self.cancelled = False  # Controlled via GUI stop button
@@ -137,8 +140,20 @@ class PipelineManager:
                 return []
             if not cleaned:
                 return []
+
+            query_terms_by_id = {
+                term.get("id"): term.get("term")
+                for term in search_terms
+                if isinstance(term, dict) and term.get("id") is not None and term.get("term")
+            }
+            filtered = self.filter_candidates(cleaned, query_terms_by_id=query_terms_by_id)
+            if self.cancelled:
+                logger.warning("Pipeline cancelled during candidate filtering stage")
+                return []
+            if not filtered:
+                return []
                 
-            processed = await self.analyze_articles(cleaned)
+            processed = await self.analyze_articles(filtered)
             return processed
             
         except ValueError as e:
@@ -311,3 +326,29 @@ class PipelineManager:
         except Exception as e:
             self.status_callback(f"Analysis error: {str(e)}", True, False, False)
             raise
+
+    def filter_candidates(self, articles: List[dict], query_terms_by_id: Optional[dict] = None) -> List[dict]:
+        """Apply pre-LLM filtering funnel and report stage metrics."""
+        self.status_callback("Filtering candidates before LLM...", False, False, False)
+        filtered, stats = self.candidate_filter.filter_candidates(
+            articles,
+            query_terms_by_id=query_terms_by_id or {},
+        )
+        logger.info(
+            "Pre-LLM funnel stats: retrieved=%s after_heuristics=%s after_semantic=%s sent_to_llm=%s drops=%s",
+            stats.get("retrieved_count", 0),
+            stats.get("after_heuristics_count", 0),
+            stats.get("after_semantic_count", 0),
+            stats.get("sent_to_llm_count", 0),
+            stats.get("dropped_by_reason", {}),
+        )
+        self.status_callback(
+            (
+                "Candidate filtering complete: "
+                f"{stats.get('sent_to_llm_count', 0)}/{stats.get('retrieved_count', 0)} sent to LLM"
+            ),
+            False,
+            False,
+            True,
+        )
+        return filtered

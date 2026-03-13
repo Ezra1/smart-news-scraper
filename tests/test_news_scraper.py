@@ -98,29 +98,55 @@ def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
 
     results = asyncio.run(scraper._fetch_for_term("term"))
     assert results == [{"title": "B"}]
-    assert "term" in sessions[0].last_json["keyword"]
-    assert "-opinion" in sessions[0].last_json["keyword"]
+    assert sessions[0].last_json["keyword"] == "term"
     assert sessions[0].last_json["apiKey"] == "api-key"
     assert sessions[0].last_json["isDuplicateFilter"] == "skipDuplicates"
 
 
-def test_build_search_query_includes_base_terms(scraper):
-    query = scraper.build_search_query(["semaglutide", "tirzepatide"])
-    assert "semaglutide" in query
-    assert "tirzepatide" in query
+def test_build_keyword_payload_for_single_term(scraper):
+    payload = scraper._build_keyword_payload("semaglutide")
+    assert payload["keyword"] == "semaglutide"
+    assert "keywordOper" not in payload
 
 
-def test_build_search_query_excludes_commentary(scraper):
-    query = scraper.build_search_query(["pharma"])
-    assert "-opinion" in query
-    assert "-editorial" in query
-    assert "-commentary" in query
-    assert "-analysis" in query
+def test_build_keyword_payload_splits_operator_syntax(scraper):
+    payload = scraper._build_keyword_payload("smuggled + [medicine | tablets]")
+    assert payload["keyword"] == ["smuggled", "medicine", "tablets"]
+    assert payload["keywordOper"] == "or"
 
 
-def test_build_search_query_does_not_require_incident_keyword(scraper):
-    """Query should not force an AND between base term and incident keywords."""
-    query = scraper.build_search_query(["semaglutide"])
-    assert "semaglutide" in query
-    assert "+" not in query
+def test_build_keyword_payload_deduplicates_case_insensitive_tokens(scraper):
+    payload = scraper._build_keyword_payload("Seized + seized + Medicine")
+    assert payload["keyword"] == ["Seized", "Medicine"]
+
+
+def test_fetch_for_term_retries_with_fallback_date_window(monkeypatch, scraper):
+    calls = []
+
+    async def fake_fetch_articles_pages(term, date_filters):
+        calls.append((term, date_filters))
+        # Simulate the original failure mode: zero results with explicit dates.
+        if date_filters == {"dateStart": "2024-11-03", "dateEnd": "2026-01-05"}:
+            return []
+        # Simulate success when retrying with fallback/default window.
+        return [{"title": "Recovered from fallback"}]
+
+    monkeypatch.setattr(scraper, "_fetch_articles_pages", fake_fetch_articles_pages)
+
+    results = asyncio.run(
+        scraper._fetch_for_term(
+            "seized + medicine",
+            date_params={"published_after": "2024-11-03", "published_before": "2026-01-05"},
+        )
+    )
+
+    assert len(results) == 1
+    assert results[0]["title"] == "Recovered from fallback"
+    assert results[0]["_retrieved_via_fallback_window"] is True
+    assert len(calls) == 2
+    assert calls[0][1] == {"dateStart": "2024-11-03", "dateEnd": "2026-01-05"}
+    # Second call should use the internal default/fallback date window.
+    assert "dateStart" in calls[1][1]
+    assert "dateEnd" in calls[1][1]
+    assert calls[1][1] != calls[0][1]
 

@@ -216,6 +216,17 @@ class DatabaseManager:
                 event_type_uri TEXT,
                 processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (raw_article_id) REFERENCES raw_articles (id)
+            )''',
+            '''CREATE TABLE IF NOT EXISTS pre_llm_filter_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_article_id INTEGER UNIQUE,
+                decision TEXT NOT NULL CHECK (decision IN ('keep','drop')),
+                reason TEXT NOT NULL,
+                heuristic_score REAL DEFAULT 0,
+                lexical_overlap INTEGER DEFAULT 0,
+                metadata TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (raw_article_id) REFERENCES raw_articles (id)
             )'''
         ]
 
@@ -268,6 +279,11 @@ class DatabaseManager:
                 "why_it_matters": "TEXT",
                 "incident_sentence": "TEXT",
                 "event_type_uri": "TEXT",
+            },
+            "pre_llm_filter_results": {
+                "heuristic_score": "REAL DEFAULT 0",
+                "lexical_overlap": "INTEGER DEFAULT 0",
+                "metadata": "TEXT",
             },
         }
 
@@ -577,6 +593,50 @@ class ArticleManager:
             return True
         except Exception as e:
             logger.error(f"Error recording processing result: {e}")
+            return False
+
+    def record_pre_llm_filter_result(
+        self,
+        raw_article_id: int,
+        decision: str,
+        reason: str,
+        heuristic_score: float = 0.0,
+        lexical_overlap: int = 0,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Record pre-LLM candidate filtering decisions for observability."""
+        try:
+            if decision not in {"keep", "drop"}:
+                logger.error(f"Invalid pre-LLM decision '{decision}' for article {raw_article_id}")
+                return False
+
+            query = """
+                INSERT INTO pre_llm_filter_results (
+                    raw_article_id, decision, reason, heuristic_score, lexical_overlap, metadata
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(raw_article_id) DO UPDATE SET
+                    decision = excluded.decision,
+                    reason = excluded.reason,
+                    heuristic_score = excluded.heuristic_score,
+                    lexical_overlap = excluded.lexical_overlap,
+                    metadata = excluded.metadata,
+                    created_at = CURRENT_TIMESTAMP
+            """
+            self.db_manager.execute_query(
+                query,
+                (
+                    raw_article_id,
+                    decision,
+                    reason,
+                    float(heuristic_score),
+                    int(lexical_overlap),
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                ),
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error recording pre-LLM filter result: {e}")
             return False
 
     def get_relevance_stats(self) -> Dict[str, int]:

@@ -1,4 +1,5 @@
 """Tests for PipelineManager callback handling."""
+import asyncio
 import pytest
 from unittest.mock import Mock, MagicMock
 
@@ -14,6 +15,9 @@ class DummyConfigManager:
     def get(self, key, default=None):
         return default
 
+    def get_context_message(self):
+        return {"role": "system", "content": "test"}
+
     def validate(self):
         return True
 
@@ -23,7 +27,7 @@ class DummyScraper:
         self.articles = articles
         self.rate_limited = False
 
-    async def fetch_articles(self, terms, term_map):
+    async def fetch_articles(self, terms, term_map, date_params=None):
         return self.articles
 
 
@@ -51,8 +55,7 @@ class TestPipelineManagerCallbacks:
         assert manager.scraper is not None
         assert manager.validator is not None
 
-    @pytest.mark.asyncio
-    async def test_fetch_articles_without_callbacks(self):
+    def test_fetch_articles_without_callbacks(self):
         """fetch_articles should work without GUI callbacks."""
         manager = PipelineManager(
             db_manager=DummyDBManager(),
@@ -61,12 +64,11 @@ class TestPipelineManagerCallbacks:
             validator=DummyValidator(),
         )
 
-        result = await manager.fetch_articles(["test-term"])
+        result = asyncio.run(manager.fetch_articles(["test-term"]))
 
         assert result == [{"id": 1, "title": "ok"}]
 
-    @pytest.mark.asyncio
-    async def test_status_callback_called_when_provided(self):
+    def test_status_callback_called_when_provided(self):
         """Verify callbacks ARE called when explicitly provided."""
         status_cb = MagicMock()
         progress_cb = MagicMock()
@@ -78,13 +80,12 @@ class TestPipelineManagerCallbacks:
         )
         manager.set_callbacks(progress_cb, status_cb)
 
-        await manager.fetch_articles(["term"])
+        asyncio.run(manager.fetch_articles(["term"]))
 
         status_cb.assert_any_call("Starting article fetch...", False, False, False)
         progress_cb.assert_any_call(1, 1)
 
-    @pytest.mark.asyncio
-    async def test_progress_callback_called_when_provided(self):
+    def test_progress_callback_called_when_provided(self):
         """Verify progress callbacks work when provided."""
         progress_cb = MagicMock()
         manager = PipelineManager(
@@ -95,12 +96,11 @@ class TestPipelineManagerCallbacks:
         )
         manager.set_callbacks(progress_cb, MagicMock())
 
-        await manager.fetch_articles(["only-term"])
+        asyncio.run(manager.fetch_articles(["only-term"]))
 
         progress_cb.assert_called_with(1, 1)
 
-    @pytest.mark.asyncio
-    async def test_mixed_callbacks_some_provided(self):
+    def test_mixed_callbacks_some_provided(self):
         """Only status_callback provided, progress left as default."""
         status_cb = MagicMock()
         manager = PipelineManager(
@@ -112,8 +112,35 @@ class TestPipelineManagerCallbacks:
         # Provide only status callback; progress remains default no-op
         manager.set_callbacks(None, status_cb)
 
-        result = await manager.fetch_articles(["term"])
+        result = asyncio.run(manager.fetch_articles(["term"]))
 
         assert result == [{"id": 2}]
         status_cb.assert_any_call("Starting article fetch...", False, False, False)
+
+    def test_filter_candidates_invokes_funnel_and_returns_filtered(self):
+        manager = PipelineManager(
+            db_manager=DummyDBManager(),
+            config_manager=DummyConfigManager(),
+            scraper=DummyScraper([]),
+            validator=DummyValidator(),
+        )
+        manager.candidate_filter = MagicMock()
+        manager.candidate_filter.filter_candidates.return_value = (
+            [{"id": 1, "title": "kept"}],
+            {
+                "retrieved_count": 3,
+                "after_heuristics_count": 2,
+                "after_semantic_count": 1,
+                "sent_to_llm_count": 1,
+                "dropped_by_reason": {"no_overlap": 2},
+            },
+        )
+
+        result = manager.filter_candidates(
+            [{"id": 1}, {"id": 2}, {"id": 3}],
+            query_terms_by_id={1: "seized medicine"},
+        )
+
+        assert result == [{"id": 1, "title": "kept"}]
+        manager.candidate_filter.filter_candidates.assert_called_once()
 

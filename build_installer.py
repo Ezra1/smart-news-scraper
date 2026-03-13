@@ -5,7 +5,7 @@ Purpose:
     Create a distributable ZIP (PyInstaller one-folder build).
 
 Usage:
-    python build_installer.py
+    python build_installer.py [--version VERSION]
 
 Requirements:
     - Python environment with pyinstaller installed
@@ -14,8 +14,9 @@ Requirements:
 
 Outputs:
     - dist/SmartNewsScraper/... with bundled app
-    - SmartNewsScraper_vYYYYMMDD.zip archive in project root
+    - SmartNewsScraper_v<version>.zip archive in project root
 """
+import argparse
 import shutil
 import subprocess
 import datetime
@@ -68,20 +69,32 @@ def move_docs_to_root() -> None:
             shutil.copy(src, dest)
 
 
-def package_zip() -> None:
-    date_str = datetime.datetime.now().strftime("%Y%m%d")
+def resolve_version(version_arg: str | None) -> str:
+    if version_arg:
+        return version_arg
+    return datetime.datetime.now().strftime("%Y%m%d")
+
+
+def package_zip(version: str) -> None:
     src = DIST_DIR / "SmartNewsScraper"
-    archive_name = PROJECT_ROOT / f"SmartNewsScraper_v{date_str}"
+    archive_name = PROJECT_ROOT / f"SmartNewsScraper_v{version}"
     shutil.make_archive(archive_name.as_posix(), "zip", src)
     print(f"Created {archive_name.with_suffix('.zip')}")
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Build ZIP installer")
+    parser.add_argument(
+        "--version",
+        help="Override archive version (default: current date YYYYMMDD)",
+    )
+    args = parser.parse_args()
+    version = resolve_version(args.version)
     ensure_directories()
     ensure_config()
     build_executable()
     move_docs_to_root()
-    package_zip()
+    package_zip(version)
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ To build the MSI installer, you need:
 ### Option 2: Using the Python Script Directly
 
 1. Open a Command Prompt in the project directory
-2. Run the Python script:
+  2. Run the Python script:
    ```
    python build_msi.py
    ```
@@ -48,13 +48,19 @@ To build the MSI installer, you need:
   ```
   build_installer.bat --skip-build
   ```
+- `--version`: Override the version suffix used in output names
+  ```
+  python build_msi.py --skip-build --version 1.0.1
+  ```
 
 ## Installation
 
-1. Run the MSI installer (`SmartNewsScraper_v[DATE].msi`)
-2. Follow the installation wizard
-3. The application will be installed to `C:\Program Files\Smart News Scraper` by default
-4. Shortcuts will be created on the desktop and in the Start Menu
+1. Download `SmartNewsScraper_v<version>.msi` from:
+   - https://github.com/Ezra1/smart-news-scraper/releases/latest
+2. Run the MSI installer
+3. Follow the installation wizard
+4. The application will be installed to `C:\Program Files\Smart News Scraper` by default
+5. Shortcuts will be created on the desktop and in the Start Menu
 
 ## Uninstallation
 
@@ -109,4 +115,15 @@ To customize the installer:
 
 ## Support
 
-If you encounter any issues with the installer, please report them on the project's issue tracker.
+If you encounter any issues with the installer, please open an issue:
+https://github.com/Ezra1/smart-news-scraper/issues
+
+## GitHub Release Workflow
+
+This repository includes a GitHub Actions release workflow at
+`.github/workflows/release.yml`.
+
+- Create and push a tag like `v1.0.1` to trigger a release build.
+- The workflow publishes ZIP and MSI artifacts to GitHub Releases.
+- The release is marked as latest so users can always download from:
+  https://github.com/Ezra1/smart-news-scraper/releases/latest

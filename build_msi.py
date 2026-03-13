@@ -5,7 +5,7 @@ Purpose:
     Produce a Windows MSI installer from the PyInstaller build.
 
 Usage:
-    python build_msi.py [--skip-build]
+    python build_msi.py [--skip-build] [--version VERSION]
 
 Requirements:
     - Windows with WiX Toolset v3.11 installed at WIX_DIR
@@ -51,12 +51,22 @@ def build_msi(version: str):
     print(f"Created {msi}")
 
 
+def resolve_version(version_arg: str | None) -> str:
+    if version_arg:
+        return version_arg
+    return datetime.datetime.now().strftime("%Y%m%d")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build MSI installer")
     parser.add_argument("--skip-build", action="store_true", help="Skip building the executable")
+    parser.add_argument(
+        "--version",
+        help="Override installer version suffix (default: current date YYYYMMDD)",
+    )
     args = parser.parse_args()
 
-    version = datetime.datetime.now().strftime("%Y%m%d")
+    version = resolve_version(args.version)
     if not args.skip_build:
         build_executable()
     build_msi(version)

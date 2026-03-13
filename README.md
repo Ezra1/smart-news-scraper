@@ -15,6 +15,23 @@ A modern application for scraping, analyzing, and managing news articles based o
 - 📱 **Cross-Platform**: Works on Windows, macOS, and Linux with cross-platform machine identification
 - 📦 **Standalone Application**: Can be packaged as a standalone executable
 
+## Download Latest Release
+
+Get the most recent Windows build from GitHub Releases:
+
+- Latest release page: [https://github.com/Ezra1/smart-news-scraper/releases/latest](https://github.com/Ezra1/smart-news-scraper/releases/latest)
+- All releases: [https://github.com/Ezra1/smart-news-scraper/releases](https://github.com/Ezra1/smart-news-scraper/releases)
+
+Download one of these assets from the latest release:
+
+- `SmartNewsScraper_v<version>.zip` (recommended for most users)
+- `SmartNewsScraper_v<version>.msi` (Windows installer)
+
+After download:
+
+1. ZIP: extract and run `SmartNewsScraper.exe`
+2. MSI: run installer and launch from Start Menu/Desktop shortcut
+
 ## Getting Started
 
 ### Prerequisites
@@ -27,7 +44,7 @@ A modern application for scraping, analyzing, and managing news articles based o
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/smart-news-scraper.git
+   git clone https://github.com/Ezra1/smart-news-scraper.git
    cd smart-news-scraper
    ```
 
@@ -193,8 +210,11 @@ PyInstaller cannot cross-compile Windows binaries from Linux.
 The bundled application runs the GUI entry point defined in `gui_main.py`:
 
 ```bash
-# Build the executable
+# Build ZIP artifact with date-based version
 python build_installer.py
+
+# Optional explicit version suffix
+python build_installer.py --version 1.0.1
 ```
 
 This will:
@@ -205,6 +225,18 @@ This will:
 
 The resulting executable will be in `dist/SmartNewsScraper/`.
 Double-click `SmartNewsScraper.exe` to launch the graphical interface.
+
+### Building an MSI Installer
+
+```bash
+# Build MSI using the existing dist build
+python build_msi.py --skip-build
+
+# Optional explicit version suffix
+python build_msi.py --skip-build --version 1.0.1
+```
+
+The MSI output is created in `installer/`.
 
 ### Distribution Contents
 

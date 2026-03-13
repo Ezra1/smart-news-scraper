@@ -1040,6 +1040,7 @@ class NewsScraperGUI(QMainWindow):
         layout.addWidget(export_btn)
 
         self.tabs.addTab(results_widget, "Results")
+        self._load_results_from_database()
 
     def _toggle_password_visibility(self, line_edit):
         if line_edit.echoMode() == QLineEdit.EchoMode.Password:
@@ -1479,7 +1480,7 @@ class NewsScraperGUI(QMainWindow):
         with open(file_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=['title', 'relevance_score', 'url', 'summary']
+                fieldnames=['title', 'relevance_score', 'url', 'event | location | actor']
             )
             writer.writeheader()
             for result in results:
@@ -1487,82 +1488,90 @@ class NewsScraperGUI(QMainWindow):
                     'title': result.get('title', ''),
                     'relevance_score': f"{result.get('relevance_score', 0):.2f}",
                     'url': result.get('url', ''),
-                    'summary': self._build_export_summary(result),
+                    'event | location | actor': self._build_export_summary(result),
                 })
 
     def _build_export_summary(self, result):
-        """Build a terse one-sentence summary with only critical information."""
+        """Build a compact 4-7 word keyphrase summary for export."""
         generic_phrases = (
             "this article",
             "passed the relevance filter",
             "high-priority for review",
             "merits attention",
             "related to pharmaceutical security monitoring",
+            "this incident highlights",
+            "this case highlights",
+            "highlights ongoing",
+            "addresses the serious issue",
+            "this operation",
+            "this enforcement action",
+            "underscores the",
         )
+        stopwords = {
+            "the", "a", "an", "this", "that", "is", "are", "was", "were", "to", "of",
+            "and", "for", "in", "on", "with", "by", "it", "its", "their", "has", "have",
+            "be", "been", "being", "as", "at", "from",
+        }
 
         def _clean_text(value):
             text = re.sub(r"\s+", " ", str(value or "")).strip()
             text = re.sub(r"https?://\S+", "", text).strip()
             return text
 
-        def _first_sentence(value):
+        def _normalize_phrase(value):
             text = _clean_text(value)
             if not text:
                 return ""
-            sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
-            return sentence[:220].rstrip(" ,;:-")
+            text = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
+            text = re.sub(
+                (
+                    r"^(this\s+(incident|case|operation|enforcement action)\s+"
+                    r"(highlights|underscores|shows|demonstrates)\s+)"
+                ),
+                "",
+                text,
+                flags=re.IGNORECASE,
+            )
+            text = re.sub(r"^(highlights|addresses|underscores)\s+", "", text, flags=re.IGNORECASE)
+            text = re.sub(
+                r"\b(the ongoing issue of|the serious issue of|the need for|efforts to)\b",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            )
+            return re.sub(r"\s+", " ", text).strip(" ,;:-.")
 
         def _is_generic(value):
             text = _clean_text(value).lower()
             return any(phrase in text for phrase in generic_phrases)
 
-        incident_sentence = _first_sentence(result.get('incident_sentence', ''))
-        if incident_sentence and not _is_generic(incident_sentence):
-            return incident_sentence if incident_sentence.endswith(('.', '!', '?')) else f"{incident_sentence}."
+        def _few_words(value, max_words=7):
+            text = _normalize_phrase(value)
+            if not text:
+                return ""
+            tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9'/-]*", text)
+            filtered = [t for t in tokens if t.lower() not in stopwords]
+            words = filtered or tokens
+            return " ".join(words[:max_words]).strip()
 
-        why_it_matters = _first_sentence(result.get('why_it_matters', ''))
-        if why_it_matters and not _is_generic(why_it_matters):
-            return why_it_matters if why_it_matters.endswith(('.', '!', '?')) else f"{why_it_matters}."
+        # Prefer structured fields first for concise signal.
+        event = _few_words(result.get("event", ""), max_words=4)
+        where_location = _few_words(result.get("where_location", ""), max_words=2)
+        who_entities = _few_words(result.get("who_entities", ""), max_words=3)
+        structured_parts = [p for p in (event, where_location, who_entities) if p]
+        if structured_parts:
+            return " | ".join(structured_parts[:3])[:80].strip(" |")
 
-        event = _clean_text(result.get('event', ''))
-        who_entities = _clean_text(result.get('who_entities', ''))
-        where_location = _clean_text(result.get('where_location', ''))
-        impact = _clean_text(result.get('impact', ''))
-        urgency = _clean_text(result.get('urgency', ''))
+        # Fall back through narrative fields, but force short keyphrase output.
+        for field in ("incident_sentence", "why_it_matters", "explanation", "title", "content", "snippet"):
+            raw = result.get(field, "")
+            if raw and not _is_generic(raw):
+                short = _few_words(raw, max_words=7)
+                if short:
+                    return short
 
-        parts = []
-        if event:
-            parts.append(event)
-        if who_entities:
-            parts.append(f"at {who_entities}")
-        if where_location:
-            parts.append(f"in {where_location}")
-        lead = " ".join(parts).strip()
-        tail_parts = [p for p in (impact, urgency) if p]
-        if lead and tail_parts:
-            sentence = f"{lead}; {'; '.join(tail_parts)}"
-            sentence = sentence[:240].rstrip(" ,;:-")
-            return sentence if sentence.endswith(('.', '!', '?')) else f"{sentence}."
-
-        explanation = _clean_text(result.get('explanation', ''))
-        if explanation and not _is_generic(explanation):
-            sentence = _first_sentence(explanation)
-            sentence = re.sub(r"^(this article|the article)\s+", "", sentence, flags=re.IGNORECASE).strip()
-            if sentence:
-                return sentence if sentence.endswith(('.', '!', '?')) else f"{sentence}."
-
-        # Headline is usually the most information-dense summary for end users.
-        title = _clean_text(result.get('title', ''))
-        if title and title.lower() != "no title":
-            title = re.sub(r"\s+-\s+(reuters|ap|bloomberg|cnbc|wsj|ft)$", "", title, flags=re.IGNORECASE)
-            return title if title.endswith(('.', '!', '?')) else f"{title}."
-
-        # Fallback to first content sentence when title is unavailable.
-        content = _first_sentence(result.get('content', '') or result.get('snippet', ''))
-        if content:
-            return content if content.endswith(('.', '!', '?')) else f"{content}."
-
-        return "Relevant pharmaceutical security update."
+        # Last fallback: still keep it short.
+        return "pharma incident"
 
     def _export_to_json(self, file_path, results):
         """Export results to JSON format"""
@@ -1597,6 +1606,33 @@ class NewsScraperGUI(QMainWindow):
             self._add_result_item(result)
 
         self.statusBar().showMessage(f"Loaded {len(valid_results)} results")
+
+    def _load_results_from_database(self):
+        """Load persisted relevant articles into the Results tab on app startup."""
+        try:
+            rows = self.db_manager.execute_query(
+                """
+                SELECT
+                    title,
+                    relevance_score,
+                    url,
+                    content,
+                    explanation,
+                    event,
+                    who_entities,
+                    where_location,
+                    impact,
+                    urgency,
+                    why_it_matters,
+                    incident_sentence
+                FROM relevant_articles
+                ORDER BY id DESC
+                """
+            ) or []
+            self._update_results(rows)
+        except Exception as e:
+            logger.error(f"Failed to load persisted results: {e}")
+            self.all_results = []
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():

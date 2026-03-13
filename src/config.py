@@ -38,9 +38,23 @@ DEFAULT_CONFIG = {
     "EVENT_REGISTRY_MENTIONS_COUNT": 100,
     "EVENT_REGISTRY_SOURCE_RANK_START": 0,
     "EVENT_REGISTRY_SOURCE_RANK_END": 50,
+    "EVENT_REGISTRY_LANG": "",
+    "EVENT_REGISTRY_SOURCE_ALLOWLIST": "",
+    "EVENT_REGISTRY_SOURCE_BLOCKLIST": "",
     "EVENT_REGISTRY_DUPLICATE_FILTER": "skipDuplicates",
     "EVENT_REGISTRY_MIN_BODY_LENGTH": 600,
     "EVENT_REGISTRY_ENABLE_URL_FALLBACK": True,
+    "PRELLM_ENABLE_FILTERING": True,
+    "PRELLM_MIN_CONTENT_CHARS": 120,
+    "PRELLM_MAX_CONTENT_CHARS": 20000,
+    "PRELLM_MIN_QUERY_TOKEN_OVERLAP": 1,
+    "PRELLM_REQUIRE_INCIDENT_SIGNAL": False,
+    "PRELLM_DEDUP_BY_URL": True,
+    "PRELLM_DEDUP_BY_TITLE": True,
+    "PRELLM_TOP_K_PER_TERM": 100,
+    "PRELLM_STAGE3_ENABLED": False,
+    "PRELLM_LOG_DROPS": True,
+    "PRELLM_ENABLE_LLM_GUARDRAIL": True,
     "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
     "DATE_RANGE_MODE": "preset",
@@ -209,6 +223,20 @@ class ConfigManager:
             "EVENT_REGISTRY_SOURCE_RANK_START": int,
             "EVENT_REGISTRY_SOURCE_RANK_END": int,
             "EVENT_REGISTRY_MIN_BODY_LENGTH": int,
+            "PRELLM_MIN_CONTENT_CHARS": int,
+            "PRELLM_MAX_CONTENT_CHARS": int,
+            "PRELLM_MIN_QUERY_TOKEN_OVERLAP": int,
+            "PRELLM_TOP_K_PER_TERM": int,
+        }
+        bool_keys = {
+            "EVENT_REGISTRY_ENABLE_URL_FALLBACK",
+            "PRELLM_ENABLE_FILTERING",
+            "PRELLM_REQUIRE_INCIDENT_SIGNAL",
+            "PRELLM_DEDUP_BY_URL",
+            "PRELLM_DEDUP_BY_TITLE",
+            "PRELLM_STAGE3_ENABLED",
+            "PRELLM_LOG_DROPS",
+            "PRELLM_ENABLE_LLM_GUARDRAIL",
         }
         
         # First load from environment
@@ -218,6 +246,8 @@ class ConfigManager:
                 try:
                     if key in type_map:
                         config[key] = type_map[key](env_value)
+                    elif key in bool_keys:
+                        config[key] = str(env_value).strip().lower() in {"1", "true", "yes", "on"}
                     else:
                         config[key] = env_value
                 except (ValueError, TypeError) as e:
@@ -388,6 +418,28 @@ class ConfigManager:
                 return False
             if source_rank_start >= source_rank_end:
                 logger.error("EVENT_REGISTRY_SOURCE_RANK_START must be less than EVENT_REGISTRY_SOURCE_RANK_END")
+                return False
+
+            if int(self.config.get("PRELLM_MIN_CONTENT_CHARS", 0)) < 0:
+                logger.error("PRELLM_MIN_CONTENT_CHARS must be >= 0")
+                return False
+
+            if int(self.config.get("PRELLM_MAX_CONTENT_CHARS", 0)) <= 0:
+                logger.error("PRELLM_MAX_CONTENT_CHARS must be > 0")
+                return False
+
+            if int(self.config.get("PRELLM_MIN_CONTENT_CHARS", 0)) > int(
+                self.config.get("PRELLM_MAX_CONTENT_CHARS", 0)
+            ):
+                logger.error("PRELLM_MIN_CONTENT_CHARS must be <= PRELLM_MAX_CONTENT_CHARS")
+                return False
+
+            if int(self.config.get("PRELLM_MIN_QUERY_TOKEN_OVERLAP", 0)) < 0:
+                logger.error("PRELLM_MIN_QUERY_TOKEN_OVERLAP must be >= 0")
+                return False
+
+            if int(self.config.get("PRELLM_TOP_K_PER_TERM", 0)) < 0:
+                logger.error("PRELLM_TOP_K_PER_TERM must be >= 0")
                 return False
 
             # Batch size validation

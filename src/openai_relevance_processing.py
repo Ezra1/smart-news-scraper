@@ -71,6 +71,7 @@ class ArticleProcessor(ArticleAnalysisMixin):
         
         # Add batch size configuration
         self.batch_size = self.config_manager.get("BATCH_SIZE", 10)
+        self.enable_llm_guardrail = bool(self.config_manager.get("PRELLM_ENABLE_LLM_GUARDRAIL", True))
         
         # Store context message from config first, with optional explicit override.
         self.context_message = context_message or self.config_manager.get_context_message()
@@ -177,6 +178,8 @@ class ArticleProcessor(ArticleAnalysisMixin):
 
             # Deterministic pre-filter to avoid unnecessary LLM calls.
             skip_llm, default_score = should_skip_llm(title, content)
+            if not self.enable_llm_guardrail:
+                skip_llm = False
             if skip_llm:
                 relevance_score = float(default_score if default_score is not None else 0.0)
                 status = "relevant" if relevance_score >= self.RELEVANCE_THRESHOLD else "irrelevant"

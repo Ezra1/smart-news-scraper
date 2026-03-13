@@ -1,10 +1,12 @@
 import aiohttp
 import asyncio
 import json
+import re
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
+from urllib.parse import urlparse
 
 from src.database_manager import ArticleManager, DatabaseManager
 from src.logger_config import setup_logging
@@ -69,6 +71,9 @@ class NewsArticleScraper:
         )
         self.min_body_length = int(self.config.get("EVENT_REGISTRY_MIN_BODY_LENGTH", 600))
         self.enable_url_fallback = bool(self.config.get("EVENT_REGISTRY_ENABLE_URL_FALLBACK", True))
+        self.language = str(self.config.get("EVENT_REGISTRY_LANG", "") or "").strip()
+        self.source_allowlist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_ALLOWLIST", ""))
+        self.source_blocklist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_BLOCKLIST", ""))
 
     async def fetch_articles(
         self,
@@ -89,6 +94,12 @@ class NewsArticleScraper:
                 mention_map = await self._fetch_mentions_for_term(term, date_params)
                 for raw in raw_articles:
                     article_data = self._normalize_article(raw)
+                    if not self._is_source_allowed(article_data):
+                        logger.info(
+                            "Skipping article due to source filtering | url=%s",
+                            article_data.get("url", ""),
+                        )
+                        continue
                     article_data["search_term_id"] = search_term_map.get(term)
                     article_data["event_type_uri"] = article_data.get("event_type_uri") or mention_map.get(
                         article_data.get("url", ""),
@@ -103,6 +114,9 @@ class NewsArticleScraper:
                     title = article_data.get("title", "")
                     content = article_data.get("content", "")
                     article_data["incident_level"] = is_incident_article(f"{title} {content}")[0]
+                    article_data["retrieval_fallback_window"] = bool(
+                        raw.get("_retrieved_via_fallback_window", False)
+                    )
 
                     article_id = self.article_manager.insert_article(article_data)
                     if article_id:
@@ -122,24 +136,43 @@ class NewsArticleScraper:
         logger.info("Fetching articles for term: %s", term)
         try:
             date_filters = self._resolve_date_filters(date_params)
-            all_articles: List[Dict] = []
-            max_pages = 5
+            all_articles = await self._fetch_articles_pages(term, date_filters)
 
-            for page in range(1, max_pages + 1):
-                await self._wait_for_rate_limit()
-                payload = self._build_articles_payload(term, page, date_filters)
-                page_articles = await self._make_api_request(payload)
-                if not page_articles:
-                    break
-                all_articles.extend(page_articles)
-                if len(page_articles) < self.articles_count:
-                    break
+            # If user-provided date filters are too restrictive for the account
+            # window, retry with the default recent window before giving up.
+            if not all_articles and date_filters:
+                fallback_filters = self._resolve_date_filters(None)
+                logger.warning(
+                    "No Event Registry results for term '%s' with date filters %s. "
+                    "Retrying with fallback window %s.",
+                    term,
+                    date_filters,
+                    fallback_filters,
+                )
+                all_articles = await self._fetch_articles_pages(term, fallback_filters)
+                for article in all_articles:
+                    if isinstance(article, dict):
+                        article["_retrieved_via_fallback_window"] = True
 
             logger.info("Found %s articles for term: %s", len(all_articles), term)
             return all_articles
         except Exception as e:
             logger.error("Error fetching articles for term '%s': %s", term, e)
             return []
+
+    async def _fetch_articles_pages(self, term: str, date_filters: Dict[str, str]) -> List[Dict]:
+        all_articles: List[Dict] = []
+        max_pages = 5
+        for page in range(1, max_pages + 1):
+            await self._wait_for_rate_limit()
+            payload = self._build_articles_payload(term, page, date_filters)
+            page_articles = await self._make_api_request(payload)
+            if not page_articles:
+                break
+            all_articles.extend(page_articles)
+            if len(page_articles) < self.articles_count:
+                break
+        return all_articles
 
     def _build_articles_payload(self, term: str, page: int, date_filters: Dict[str, str]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -150,9 +183,7 @@ class NewsArticleScraper:
             "articlesCount": self.articles_count,
             "articlesSortBy": "date",
             "articlesSortByAsc": False,
-            "keyword": self.build_search_query([term]),
             "keywordLoc": "body,title",
-            "lang": "eng",
             "includeArticleTitle": True,
             "includeArticleBasicInfo": True,
             "includeArticleBody": True,
@@ -166,6 +197,9 @@ class NewsArticleScraper:
             "startSourceRankPercentile": self.source_rank_start,
             "endSourceRankPercentile": self.source_rank_end,
         }
+        payload.update(self._build_keyword_payload(term))
+        if self.language:
+            payload["lang"] = self.language
         payload.update(date_filters)
         return payload
 
@@ -225,11 +259,12 @@ class NewsArticleScraper:
             "mentionsCount": self.mentions_count,
             "mentionsSortBy": "date",
             "mentionsSortByAsc": False,
-            "keyword": term,
             "eventTypeUri": self.event_type_uris,
-            "lang": "eng",
             "showDuplicates": False,
         }
+        payload.update(self._build_keyword_payload(term))
+        if self.language:
+            payload["lang"] = self.language
         payload.update(date_filters)
 
         try:
@@ -377,6 +412,12 @@ class NewsArticleScraper:
             if articles:
                 for article in articles:
                     normalized = self._normalize_article(article)
+                    if not self._is_source_allowed(normalized):
+                        logger.info(
+                            "Skipping article due to source filtering | url=%s",
+                            normalized.get("url", ""),
+                        )
+                        continue
                     normalized["search_term_id"] = term.get("id")
                     normalized["event_type_uri"] = mention_map.get(normalized.get("url", ""), {}).get(
                         "event_type_uri",
@@ -386,17 +427,75 @@ class NewsArticleScraper:
                         "incident_sentence",
                         "",
                     )
+                    normalized["retrieval_fallback_window"] = bool(
+                        article.get("_retrieved_via_fallback_window", False)
+                    )
                     await self._maybe_apply_url_fallback(normalized)
                     all_articles.append(normalized)
 
         return all_articles
 
-    def build_search_query(self, base_terms: List[str]) -> str:
-        incident_boost = "(seized | arrested | raided | smuggling | counterfeit | recall)"
-        base = " | ".join(base_terms)
-        query = f"({base}) ({incident_boost} | {base})"
-        query += " -opinion -editorial -commentary -analysis"
-        return query
+    def _build_keyword_payload(self, term: str) -> Dict[str, Any]:
+        """
+        Build Event Registry keyword filter from user-entered term syntax.
+
+        Users often type operators like '+', '|', and brackets in the GUI.
+        For the `keyword` parameter we normalize those into keyword tokens
+        and use OR matching to avoid over-constraining the request.
+        """
+        raw = str(term or "").strip()
+        if not raw:
+            return {"keyword": ""}
+
+        parts = [p.strip() for p in re.split(r"[+\|\[\]]", raw) if p.strip()]
+        if not parts:
+            return {"keyword": raw}
+
+        # Preserve order while removing duplicates.
+        seen = set()
+        keywords: List[str] = []
+        for part in parts:
+            token = re.sub(r"\s+", " ", part).strip()
+            if token and token.lower() not in seen:
+                keywords.append(token)
+                seen.add(token.lower())
+
+        if len(keywords) == 1:
+            return {"keyword": keywords[0]}
+        return {"keyword": keywords, "keywordOper": "or"}
+
+    def _is_source_allowed(self, article_data: Dict[str, Any]) -> bool:
+        """Apply source allow/block filters using article URL domain."""
+        if not self.source_allowlist and not self.source_blocklist:
+            return True
+
+        url = str(article_data.get("url", "") or "")
+        domain = self._normalize_domain(urlparse(url).netloc)
+        if not domain:
+            return not bool(self.source_allowlist)
+
+        if self.source_blocklist and domain in self.source_blocklist:
+            return False
+        if self.source_allowlist and domain not in self.source_allowlist:
+            return False
+        return True
+
+    @staticmethod
+    def _normalize_domain(domain: str) -> str:
+        normalized = (domain or "").strip().lower()
+        if normalized.startswith("www."):
+            normalized = normalized[4:]
+        return normalized
+
+    @classmethod
+    def _parse_csv_list(cls, value: Any) -> set:
+        if not value:
+            return set()
+        if isinstance(value, (list, tuple, set)):
+            raw_values = value
+        else:
+            raw_values = str(value).split(",")
+        return {cls._normalize_domain(str(v).strip()) for v in raw_values if str(v).strip()}
 
     def _resolve_date_filters(
         self,
