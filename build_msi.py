@@ -18,6 +18,8 @@ Examples:
 """
 import argparse
 import datetime
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -43,12 +45,42 @@ def build_msi(version: str):
     wxs = PROJECT_ROOT / "installer.wxs"
     msi = installer_dir / f"SmartNewsScraper_v{version}.msi"
 
-    candle = f"{WIX_DIR}\\candle.exe"
-    light = f"{WIX_DIR}\\light.exe"
+    candle, light = resolve_wix_tools()
 
     run([candle, str(wxs), "-o", str(wixobj)])
     run([light, str(wixobj), "-o", str(msi)])
     print(f"Created {msi}")
+
+
+def resolve_wix_tools() -> tuple[str, str]:
+    """Resolve candle.exe and light.exe from PATH or common WiX install folders."""
+    candle_on_path = shutil.which("candle.exe") or shutil.which("candle")
+    light_on_path = shutil.which("light.exe") or shutil.which("light")
+    if candle_on_path and light_on_path:
+        return candle_on_path, light_on_path
+
+    candidate_bins = [Path(WIX_DIR)]
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    program_files = os.environ.get("ProgramFiles")
+    common_roots = [program_files_x86, program_files]
+    wix_versions = ["v3.11", "v3.14", "v3.15", "v3.16", "v3.17"]
+    for root in common_roots:
+        if not root:
+            continue
+        for version in wix_versions:
+            candidate_bins.append(Path(root) / f"WiX Toolset {version}" / "bin")
+            candidate_bins.append(Path(root) / f"Wix Toolset {version}" / "bin")
+
+    for bin_dir in candidate_bins:
+        candle = bin_dir / "candle.exe"
+        light = bin_dir / "light.exe"
+        if candle.exists() and light.exists():
+            return str(candle), str(light)
+
+    raise FileNotFoundError(
+        "Could not locate WiX tools (candle.exe/light.exe). "
+        "Install WiX and ensure tools are on PATH, or update WIX_DIR in build_msi.py."
+    )
 
 
 def resolve_version(version_arg: str | None) -> str:
