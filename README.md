@@ -24,13 +24,13 @@ Get the most recent Windows build from GitHub Releases:
 
 Download one of these assets from the latest release:
 
-- `SmartNewsScraper_v<version>.zip` (recommended for most users)
-- `SmartNewsScraper_v<version>.msi` (Windows installer)
+- `SmartNewsScraper_v<version>.msi` (recommended for non-technical users; guided Windows installer)
+- `SmartNewsScraper_v<version>.zip` (for users who want more control/portable files)
 
 After download:
 
-1. ZIP: extract and run `SmartNewsScraper.exe`
-2. MSI: run installer and launch from Start Menu/Desktop shortcut
+1. MSI: run the installer and launch from Start Menu/Desktop shortcut
+2. ZIP: extract and run `SmartNewsScraper.exe`
 
 ## Getting Started
 
