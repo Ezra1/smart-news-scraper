@@ -7,16 +7,24 @@ from src.openai_relevance_processing import ArticleProcessor
 from src.config import ConfigManager
 
 
-def create_pipeline(db_path: Optional[str] = None, config_manager: Optional[ConfigManager] = None) -> Dict[str, object]:
+def create_pipeline(
+    db_path: Optional[str] = None,
+    config_manager: Optional[ConfigManager] = None,
+    include_processor: bool = True,
+) -> Dict[str, object]:
     """Create a configured pipeline with shared components for CLI and GUI."""
     config = config_manager or ConfigManager()
     db = DatabaseManager(db_path) if db_path else DatabaseManager()
 
-    return {
+    components: Dict[str, object] = {
         "config": config,
         "db_manager": db,
         "scraper": NewsArticleScraper(config, db_manager=db),
         "validator": ArticleValidator(),
-        "processor": ArticleProcessor(db_manager=db, config_manager=config),
+        "processor": None,
     }
+    if include_processor:
+        components["processor"] = ArticleProcessor(db_manager=db, config_manager=config)
+
+    return components
 

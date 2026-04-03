@@ -301,7 +301,7 @@ class NewsScraperGUI(QMainWindow):
         self.setMinimumSize(1200, 800)
 
         # Initialize base components via shared factory to keep CLI/GUI consistent
-        pipeline_components = create_pipeline()
+        pipeline_components = create_pipeline(include_processor=False)
         self.validator = pipeline_components["validator"]
         self.config_manager = pipeline_components["config"]
         self.db_manager = pipeline_components["db_manager"]
@@ -322,6 +322,23 @@ class NewsScraperGUI(QMainWindow):
         # Setup UI
         self._setup_ui()
         self._setup_styles()
+        self._show_startup_validation_hint()
+
+    def _missing_required_keys(self) -> list[str]:
+        """Return required config keys that are currently missing."""
+        required_keys = ("NEWS_API_KEY", "OPENAI_API_KEY")
+        return [key for key in required_keys if not self.config_manager.get(key)]
+
+    def _show_startup_validation_hint(self):
+        """Show a non-blocking startup hint when required keys are missing."""
+        missing_keys = self._missing_required_keys()
+        if not missing_keys:
+            return
+
+        missing_labels = ", ".join(key.replace("_", " ").title() for key in missing_keys)
+        self.statusBar().showMessage(
+            f"Configuration needed: add {missing_labels} in the Configuration tab before starting processing."
+        )
 
     def _setup_ui(self):
         """Build the tabbed interface and base widgets."""
@@ -1105,10 +1122,23 @@ class NewsScraperGUI(QMainWindow):
         """
         try:
             # Validate configuration first
-            if not self.config_manager.validate():
-                QMessageBox.warning(self, "Configuration Error", 
-                                  "Please configure your API keys in the Configuration tab first.")
+            missing_keys = self._missing_required_keys()
+            if missing_keys:
+                missing_labels = ", ".join(key.replace("_", " ").title() for key in missing_keys)
+                QMessageBox.warning(
+                    self,
+                    "Configuration Error",
+                    f"Missing required settings: {missing_labels}. Please update the Configuration tab first.",
+                )
                 self.tabs.setCurrentIndex(0)  # Switch to config tab
+                return
+            if not self.config_manager.validate():
+                QMessageBox.warning(
+                    self,
+                    "Configuration Error",
+                    "Configuration is invalid. Please review values in the Configuration tab.",
+                )
+                self.tabs.setCurrentIndex(0)
                 return
 
             valid_dates, date_error = self.date_range_widget.validate_selection()
