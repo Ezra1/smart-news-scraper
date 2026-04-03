@@ -4,16 +4,16 @@ A modern application for scraping, analyzing, and managing news articles based o
 
 ## Features
 
-- 📰 **Article Scraping**: Automatically fetch news articles using The News API
-- 🤖 **AI-Powered Analysis**: Evaluate article relevance using OpenAI's API
-- 🔍 **Custom Search Terms**: Manage and organize your search terms
-- 📊 **Visual Progress Tracking**: Real-time processing status and progress indicators
-- 💾 **Persistent Storage**: SQLite database for storing articles and search terms
-- 📁 **Import/Export**: Support for importing/exporting search terms and results
-- 🎨 **Modern UI**: Clean, intuitive PyQt6-based interface
-- 🔒 **Secure Configuration**: Encrypted storage of API keys
-- 📱 **Cross-Platform**: Works on Windows, macOS, and Linux with cross-platform machine identification
-- 📦 **Standalone Application**: Can be packaged as a standalone executable
+-  **Article Scraping**: Automatically fetch news articles using The News API
+-  **AI-Powered Analysis**: Evaluate article relevance using OpenAI's API
+-  **Custom Search Terms**: Manage and organize your search terms
+-  **Visual Progress Tracking**: Real-time processing status and progress indicators
+-  **Persistent Storage**: SQLite database for storing articles and search terms
+-  **Import/Export**: Support for importing/exporting search terms and results
+-  **Modern UI**: Clean, intuitive PyQt6-based interface
+-  **Secure Configuration**: Encrypted storage of API keys
+-  **Cross-Platform**: Works on Windows, macOS, and Linux with cross-platform machine identification
+-  **Standalone Application**: Can be packaged as a standalone executable
 
 ## Download Latest Release
 
