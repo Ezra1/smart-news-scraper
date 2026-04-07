@@ -26,6 +26,9 @@ MAX_ARTICLE_PAGES = 5
 HTTP_UNAUTHORIZED = 401
 HTTP_PAYMENT_REQUIRED = 402
 HTTP_TOO_MANY_REQUESTS = 429
+EVENT_REGISTRY_HOST = "eventregistry.org"
+DEFAULT_EVENT_REGISTRY_ARTICLES_URL = "https://eventregistry.org/api/v1/article/getArticles"
+DEFAULT_EVENT_REGISTRY_MENTIONS_URL = "https://eventregistry.org/api/v1/article/getMentions"
 
 PHARMA_SECURITY_EVENT_TYPES = [
     "et/crime/counterfeit-goods",
@@ -48,13 +51,15 @@ class NewsArticleScraper:
     ):
         self.config = config_manager
         self.api_key = self.config.get("NEWS_API_KEY")
-        self.api_url = self.config.get(
-            "NEWS_API_URL",
-            "https://eventregistry.org/api/v1/article/getArticles",
+        self.api_url = self._resolve_event_registry_url(
+            configured_url=self.config.get("NEWS_API_URL", DEFAULT_EVENT_REGISTRY_ARTICLES_URL),
+            default_url=DEFAULT_EVENT_REGISTRY_ARTICLES_URL,
+            setting_name="NEWS_API_URL",
         )
-        self.mentions_url = self.config.get(
-            "EVENT_REGISTRY_MENTIONS_URL",
-            "https://eventregistry.org/api/v1/article/getMentions",
+        self.mentions_url = self._resolve_event_registry_url(
+            configured_url=self.config.get("EVENT_REGISTRY_MENTIONS_URL", DEFAULT_EVENT_REGISTRY_MENTIONS_URL),
+            default_url=DEFAULT_EVENT_REGISTRY_MENTIONS_URL,
+            setting_name="EVENT_REGISTRY_MENTIONS_URL",
         )
         self.rate_limited = False
         self.partial_results = []
@@ -78,6 +83,63 @@ class NewsArticleScraper:
         self.language = str(self.config.get("EVENT_REGISTRY_LANG", "") or "").strip()
         self.source_allowlist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_ALLOWLIST", ""))
         self.source_blocklist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_BLOCKLIST", ""))
+        logger.info(
+            "Initialized Event Registry scraper | api_url=%s mentions_url=%s lang=%s source_rank=%s-%s",
+            self.api_url,
+            self.mentions_url,
+            self.language or "<any>",
+            self.source_rank_start,
+            self.source_rank_end,
+        )
+
+    @staticmethod
+    def _resolve_event_registry_url(configured_url: Any, default_url: str, setting_name: str) -> str:
+        """Ensure configured URL points to Event Registry endpoints."""
+        candidate = str(configured_url or "").strip()
+        if not candidate:
+            return default_url
+
+        normalized = candidate.lower()
+        if EVENT_REGISTRY_HOST in normalized:
+            return candidate
+
+        logger.warning(
+            "%s is set to non-Event-Registry URL '%s'; falling back to '%s'",
+            setting_name,
+            candidate,
+            default_url,
+        )
+        return default_url
+
+    @staticmethod
+    def _extract_api_error_message(data: Any) -> str:
+        """Extract common API error payload shapes into a readable message."""
+        if not isinstance(data, dict):
+            return ""
+
+        error_value = data.get("error")
+        if isinstance(error_value, str) and error_value.strip():
+            return error_value.strip()
+        if isinstance(error_value, dict):
+            message = error_value.get("message") or error_value.get("description")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+
+        errors_value = data.get("errors")
+        if isinstance(errors_value, list):
+            messages = [str(item).strip() for item in errors_value if str(item).strip()]
+            if messages:
+                return "; ".join(messages)
+        if isinstance(errors_value, dict):
+            messages = [str(v).strip() for v in errors_value.values() if str(v).strip()]
+            if messages:
+                return "; ".join(messages)
+
+        message_value = data.get("message")
+        if isinstance(message_value, str) and message_value.strip():
+            return message_value.strip()
+
+        return ""
 
     async def fetch_articles(
         self,
@@ -219,6 +281,9 @@ class NewsArticleScraper:
         if not isinstance(payload, dict):
             logger.error("_make_api_request expected dict payload, got %s", type(payload).__name__)
             return []
+        if not isinstance(self.api_key, str) or not self.api_key.strip():
+            logger.error("Event Registry API key is missing; cannot fetch articles")
+            return []
         if not self.api_url:
             logger.error("Event Registry API URL is not configured")
             return []
@@ -228,6 +293,14 @@ class NewsArticleScraper:
                 async with session.post(self.api_url, json=payload) as response:
                     if response.status == 200:
                         data = await response.json()
+                        api_error = self._extract_api_error_message(data)
+                        if api_error:
+                            logger.error(
+                                "Event Registry returned API error with HTTP 200: %s | payload=%s",
+                                api_error,
+                                payload,
+                            )
+                            return []
                         return self._extract_articles_from_response(data)
                     if response.status in (HTTP_PAYMENT_REQUIRED, HTTP_TOO_MANY_REQUESTS):
                         logger.warning("Rate limit/plan limit exceeded for Event Registry")
@@ -276,6 +349,9 @@ class NewsArticleScraper:
         if not isinstance(term, str) or not term.strip():
             logger.warning("Skipping mentions fetch for empty/invalid term: %r", term)
             return {}
+        if not isinstance(self.api_key, str) or not self.api_key.strip():
+            logger.warning("Event Registry API key is missing; skipping mentions fetch for term '%s'", term)
+            return {}
         if not self.mentions_url:
             logger.error("Event Registry mentions URL is not configured")
             return {}
@@ -301,8 +377,23 @@ class NewsArticleScraper:
             async with aiohttp.ClientSession(timeout=CLIENT_TIMEOUT, trust_env=True) as session:
                 async with session.post(self.mentions_url, json=payload) as response:
                     if response.status != 200:
+                        response_text = await response.text()
+                        logger.warning(
+                            "Event Registry mentions request failed with status %s for term '%s' | response=%s",
+                            response.status,
+                            term,
+                            response_text,
+                        )
                         return {}
                     data = await response.json()
+                    api_error = self._extract_api_error_message(data)
+                    if api_error:
+                        logger.warning(
+                            "Event Registry mentions API error with HTTP 200 for term '%s': %s",
+                            term,
+                            api_error,
+                        )
+                        return {}
         except Exception as e:
             logger.warning("Event Registry mentions request failed for term '%s': %s", term, e)
             return {}

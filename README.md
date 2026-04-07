@@ -4,7 +4,7 @@ A modern application for scraping, analyzing, and managing news articles based o
 
 ## Features
 
--  **Article Scraping**: Automatically fetch news articles using The News API
+-  **Article Scraping**: Automatically fetch news articles using Event Registry
 -  **AI-Powered Analysis**: Evaluate article relevance using OpenAI's API
 -  **Custom Search Terms**: Manage and organize your search terms
 -  **Visual Progress Tracking**: Real-time processing status and progress indicators
@@ -37,7 +37,7 @@ After download:
 ### Prerequisites
 
 - Python 3.8+
-- The News API token (get one at [thenewsapi.com](https://www.thenewsapi.com/))
+- Event Registry API key (get one at [eventregistry.org](https://eventregistry.org/))
 - OpenAI API key (get one at [openai.com](https://platform.openai.com/))
 
 ### Installation
@@ -56,7 +56,7 @@ After download:
 3. Set up configuration securely (recommended):
    ```bash
    cp config/config.template.json config/config.json
-   export NEWS_SCRAPER_NEWS_API_KEY="your_thenewsapi_token_here"
+   export NEWS_SCRAPER_NEWS_API_KEY="your_event_registry_api_key_here"
    export NEWS_SCRAPER_OPENAI_API_KEY="your_openai_api_key_here"
    # Optional hardening for encrypted local key storage:
    export NEWS_SCRAPER_MASTER_KEY="a-strong-random-passphrase"
@@ -101,10 +101,10 @@ The GUI provides:
 | Setting | Description | Default |
 |---------|-------------|---------|
 | RELEVANCE_THRESHOLD | Minimum relevance score for articles | 0.7 |
-| NEWS_API_KEY | Your The News API token | None |
+| NEWS_API_KEY | Your Event Registry API key | None |
 | OPENAI_API_KEY | Your OpenAI API key for analysis | None |
-| NEWS_API_URL | The News API endpoint URL | https://api.thenewsapi.com/v1/news/all |
-| NEWS_API_REQUESTS_PER_SECOND | Rate limit for The News API | 1 |
+| NEWS_API_URL | Event Registry `getArticles` endpoint URL | https://eventregistry.org/api/v1/article/getArticles |
+| NEWS_API_REQUESTS_PER_SECOND | Rate limit for Event Registry API | 1 |
 | OPENAI_REQUESTS_PER_MINUTE | Rate limit for OpenAI API | 60 |
 | BATCH_SIZE | Number of articles to process in parallel | 100 |
 | DATABASE_PATH | Path to SQLite database | data/news_articles.db |
@@ -123,7 +123,7 @@ loaded from environment variables when present and are never written to
 - **DatabaseManager**: Handles SQLite database operations with connection pooling
 - **ArticleManager**: Manages article storage and retrieval
 - **SearchTermManager**: Handles search term operations
-- **NewsArticleScraper**: Fetches articles from The News API with rate limiting
+- **NewsArticleScraper**: Fetches articles from Event Registry with rate limiting
 - **ArticleProcessor**: Processes articles using OpenAI for relevance scoring
 - **ArticleValidator**: Cleans and validates article content
 - **PipelineManager**: Orchestrates the entire processing workflow
@@ -135,7 +135,7 @@ loaded from environment variables when present and are never written to
 
 1. **Search Terms** → Load from file or database
 2. **PipelineManager** → Coordinates the processing workflow
-3. **NewsArticleScraper** → Fetch articles from The News API
+3. **NewsArticleScraper** → Fetch articles from Event Registry
 4. **ArticleValidator** → Clean and validate article content
 5. **ArticleManager** → Store raw articles in database
 6. **ArticleProcessor** → Process articles with OpenAI
@@ -159,7 +159,7 @@ smart-news-scraper/
 │   ├── insert_processed_articles.py # Relevance filtering
 │   ├── insert_search_terms.py   # Search term management
 │   ├── logger_config.py         # Logging configuration
-│   ├── news_scraper.py          # The News API integration
+│   ├── news_scraper.py          # Event Registry integration
 │   ├── openai_relevance_processing.py # OpenAI processing
 │   ├── pipeline_manager.py      # Processing pipeline
 │   ├── qt_gui.py                # PyQt6 GUI implementation
@@ -281,7 +281,7 @@ they are easy to find:
 ## Acknowledgments
 
 - Powered by [OpenAI](https://openai.com/) for article analysis
-- News data provided by [The News API](https://www.thenewsapi.com/)
+- News data provided by [Event Registry](https://eventregistry.org/)
 - GUI built with [PyQt6](https://www.riverbankcomputing.com/software/pyqt/)
 - SQLite for efficient data storage
 - Python's asyncio for concurrent processing

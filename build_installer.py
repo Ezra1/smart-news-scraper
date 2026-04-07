@@ -48,22 +48,22 @@ def build_executable() -> None:
     subprocess.check_call(cmd)
 
 
-def move_docs_to_root() -> None:
-    """Ensure documentation files reside in the distribution root."""
+def copy_docs_to_root() -> None:
+    """Copy user-facing docs to distribution root without duplicating _internal data."""
     output_dir = DIST_DIR / "SmartNewsScraper"
-    internal = output_dir / "_internal"
-    if not internal.exists():
+    if not output_dir.exists():
         return
     docs = [
         "README.md",
         "requirements.txt",
-        "setup.py",
+        "INSTALLATION.md",
+        "INSTALLER.md",
         "CHANGELOG.md",
         "pharmaceutical_search_terms.txt",
         "ai_context_prompt.txt",
     ]
     for doc in docs:
-        src = internal / doc
+        src = PROJECT_ROOT / doc
         dest = output_dir / doc
         if src.exists():
             shutil.copy(src, dest)
@@ -93,7 +93,7 @@ def main() -> None:
     ensure_directories()
     ensure_config()
     build_executable()
-    move_docs_to_root()
+    copy_docs_to_root()
     package_zip(version)
 
 

@@ -45,7 +45,7 @@ This document provides instructions for installing and running the Smart News Sc
 When you run the application for the first time:
 
 1. You'll need to configure your API keys in the Configuration tab:
-   - The News API token (from thenewsapi.com)
+   - Event Registry API key (from eventregistry.org)
    - OpenAI API Key (from platform.openai.com)
 
 2. Add search terms in the Search Terms tab:
