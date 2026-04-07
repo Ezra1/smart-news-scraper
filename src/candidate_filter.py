@@ -79,8 +79,8 @@ class CandidateFilter:
         self.top_k_per_term = int(self.config.get("PRELLM_TOP_K_PER_TERM", 100))
         self.stage3_enabled = bool(self.config.get("PRELLM_STAGE3_ENABLED", False))
         self.log_drops = bool(self.config.get("PRELLM_LOG_DROPS", True))
-        self.source_allowlist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_ALLOWLIST", ""))
-        self.source_blocklist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_BLOCKLIST", ""))
+        self.source_allowlist = self._parse_csv_list(self.config.get("NEWS_SOURCE_ALLOWLIST", ""))
+        self.source_blocklist = self._parse_csv_list(self.config.get("NEWS_SOURCE_BLOCKLIST", ""))
 
     def filter_candidates(
         self,

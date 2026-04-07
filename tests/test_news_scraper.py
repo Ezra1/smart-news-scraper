@@ -9,16 +9,12 @@ class MockConfig:
     def get(self, key, default=None):
         values = {
             "NEWS_API_KEY": "api-key",
-            "NEWS_API_URL": "http://example.com",
-            "EVENT_REGISTRY_MENTIONS_URL": "http://example.com/mentions",
+            "NEWS_API_BASE_URL": "https://api.thenewsapi.com/v1/news",
             "NEWS_API_REQUESTS_PER_SECOND": 1,
-            "EVENT_REGISTRY_ARTICLES_COUNT": 50,
-            "EVENT_REGISTRY_MENTIONS_COUNT": 100,
-            "EVENT_REGISTRY_SOURCE_RANK_START": 0,
-            "EVENT_REGISTRY_SOURCE_RANK_END": 50,
-            "EVENT_REGISTRY_DUPLICATE_FILTER": "skipDuplicates",
-            "EVENT_REGISTRY_MIN_BODY_LENGTH": 600,
-            "EVENT_REGISTRY_ENABLE_URL_FALLBACK": False,
+            "NEWS_API_PAGE_LIMIT": 50,
+            "NEWS_API_LANGUAGE": "en",
+            "NEWS_API_MIN_BODY_LENGTH": 600,
+            "NEWS_API_ENABLE_URL_FALLBACK": False,
         }
         return values.get(key, default)
 
@@ -39,7 +35,7 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, response):
         self.response = response
-        self.last_json = None
+        self.last_params = None
 
     async def __aenter__(self):
         return self
@@ -47,8 +43,8 @@ class FakeSession:
     async def __aexit__(self, exc_type, exc, tb):
         pass
 
-    def post(self, *args, **kwargs):
-        self.last_json = kwargs.get("json")
+    def get(self, *args, **kwargs):
+        self.last_params = kwargs.get("params")
         @asynccontextmanager
         async def cm():
             yield self.response
@@ -61,7 +57,7 @@ def scraper():
 
 
 def test_make_api_request_success(monkeypatch, scraper):
-    response = FakeResponse(200, {"articles": {"results": [{"title": "A"}]}})
+    response = FakeResponse(200, {"data": [{"title": "A"}]})
 
     def client_session(*args, **kwargs):
         return FakeSession(response)
@@ -86,7 +82,7 @@ def test_make_api_request_rate_limit(monkeypatch, scraper):
 
 
 def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
-    response = FakeResponse(200, {"articles": {"results": [{"title": "B"}]}})
+    response = FakeResponse(200, {"data": [{"title": "B"}]})
     sessions = []
 
     def client_session(*args, **kwargs):
@@ -98,26 +94,24 @@ def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
 
     results = asyncio.run(scraper._fetch_for_term("term"))
     assert results == [{"title": "B"}]
-    assert sessions[0].last_json["keyword"] == "term"
-    assert sessions[0].last_json["apiKey"] == "api-key"
-    assert sessions[0].last_json["isDuplicateFilter"] == "skipDuplicates"
+    assert sessions[0].last_params["search"] == "term"
+    assert sessions[0].last_params["api_token"] == "api-key"
+    assert sessions[0].last_params["language"] == "en"
 
 
-def test_build_keyword_payload_for_single_term(scraper):
-    payload = scraper._build_keyword_payload("semaglutide")
-    assert payload["keyword"] == "semaglutide"
-    assert "keywordOper" not in payload
+def test_build_search_query_for_single_term(scraper):
+    query = scraper._build_search_query("semaglutide")
+    assert query == "semaglutide"
 
 
-def test_build_keyword_payload_splits_operator_syntax(scraper):
-    payload = scraper._build_keyword_payload("smuggled + [medicine | tablets]")
-    assert payload["keyword"] == ["smuggled", "medicine", "tablets"]
-    assert payload["keywordOper"] == "or"
+def test_build_search_query_preserves_operator_syntax(scraper):
+    query = scraper._build_search_query("smuggled + [medicine | tablets]")
+    assert query == "smuggled + (medicine | tablets)"
 
 
-def test_build_keyword_payload_deduplicates_case_insensitive_tokens(scraper):
-    payload = scraper._build_keyword_payload("Seized + seized + Medicine")
-    assert payload["keyword"] == ["Seized", "Medicine"]
+def test_build_search_query_normalizes_whitespace(scraper):
+    query = scraper._build_search_query('  "counterfeit medicine"   +   raid   ')
+    assert query == '"counterfeit medicine" + raid'
 
 
 def test_fetch_for_term_retries_with_fallback_date_window(monkeypatch, scraper):
@@ -126,7 +120,7 @@ def test_fetch_for_term_retries_with_fallback_date_window(monkeypatch, scraper):
     async def fake_fetch_articles_pages(term, date_filters):
         calls.append((term, date_filters))
         # Simulate the original failure mode: zero results with explicit dates.
-        if date_filters == {"dateStart": "2024-11-03", "dateEnd": "2026-01-05"}:
+        if date_filters == {"published_after": "2024-11-03", "published_before": "2026-01-05"}:
             return []
         # Simulate success when retrying with fallback/default window.
         return [{"title": "Recovered from fallback"}]
@@ -144,9 +138,9 @@ def test_fetch_for_term_retries_with_fallback_date_window(monkeypatch, scraper):
     assert results[0]["title"] == "Recovered from fallback"
     assert results[0]["_retrieved_via_fallback_window"] is True
     assert len(calls) == 2
-    assert calls[0][1] == {"dateStart": "2024-11-03", "dateEnd": "2026-01-05"}
+    assert calls[0][1] == {"published_after": "2024-11-03", "published_before": "2026-01-05"}
     # Second call should use the internal default/fallback date window.
-    assert "dateStart" in calls[1][1]
-    assert "dateEnd" in calls[1][1]
+    assert "published_after" in calls[1][1]
+    assert "published_before" in calls[1][1]
     assert calls[1][1] != calls[0][1]
 

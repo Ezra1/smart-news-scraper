@@ -25,23 +25,15 @@ CLIENT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
 MAX_ARTICLE_PAGES = 5
 HTTP_UNAUTHORIZED = 401
 HTTP_PAYMENT_REQUIRED = 402
+HTTP_FORBIDDEN = 403
+HTTP_BAD_REQUEST = 400
 HTTP_TOO_MANY_REQUESTS = 429
-EVENT_REGISTRY_HOST = "eventregistry.org"
-DEFAULT_EVENT_REGISTRY_ARTICLES_URL = "https://eventregistry.org/api/v1/article/getArticles"
-DEFAULT_EVENT_REGISTRY_MENTIONS_URL = "https://eventregistry.org/api/v1/article/getMentions"
-
-PHARMA_SECURITY_EVENT_TYPES = [
-    "et/crime/counterfeit-goods",
-    "et/crime/arrest",
-    "et/crime/raid",
-    "et/business/recalls",
-    "et/health/disease/outbreak",
-    "et/politics/sanctions",
-]
+THENEWSAPI_HOST = "thenewsapi.com"
+DEFAULT_THENEWSAPI_BASE_URL = "https://api.thenewsapi.com/v1/news"
 
 
 class NewsArticleScraper:
-    """Fetch and enrich articles using Event Registry."""
+    """Fetch and enrich articles using TheNewsAPI."""
 
     def __init__(
         self,
@@ -51,60 +43,47 @@ class NewsArticleScraper:
     ):
         self.config = config_manager
         self.api_key = self.config.get("NEWS_API_KEY")
-        self.api_url = self._resolve_event_registry_url(
-            configured_url=self.config.get("NEWS_API_URL", DEFAULT_EVENT_REGISTRY_ARTICLES_URL),
-            default_url=DEFAULT_EVENT_REGISTRY_ARTICLES_URL,
-            setting_name="NEWS_API_URL",
+        self.api_base_url = self._resolve_news_api_base_url(
+            configured_url=self.config.get("NEWS_API_BASE_URL", DEFAULT_THENEWSAPI_BASE_URL),
+            default_url=DEFAULT_THENEWSAPI_BASE_URL,
+            setting_name="NEWS_API_BASE_URL",
         )
-        self.mentions_url = self._resolve_event_registry_url(
-            configured_url=self.config.get("EVENT_REGISTRY_MENTIONS_URL", DEFAULT_EVENT_REGISTRY_MENTIONS_URL),
-            default_url=DEFAULT_EVENT_REGISTRY_MENTIONS_URL,
-            setting_name="EVENT_REGISTRY_MENTIONS_URL",
-        )
+        self.api_url = f"{self.api_base_url}/all"
         self.rate_limited = False
         self.partial_results = []
-        self.event_type_uris = list(PHARMA_SECURITY_EVENT_TYPES)
 
         self.db_manager = db_manager or DatabaseManager(db_path or "news_articles.db")
         self.article_manager = ArticleManager(self.db_manager)
 
         requests_per_second = config_manager.get("NEWS_API_REQUESTS_PER_SECOND", 1)
         self.rate_limiter = RateLimiter(requests_per_second=requests_per_second)
-        self.articles_count = int(self.config.get("EVENT_REGISTRY_ARTICLES_COUNT", 100))
-        self.mentions_count = int(self.config.get("EVENT_REGISTRY_MENTIONS_COUNT", 100))
-        self.source_rank_start = int(self.config.get("EVENT_REGISTRY_SOURCE_RANK_START", 0))
-        self.source_rank_end = int(self.config.get("EVENT_REGISTRY_SOURCE_RANK_END", 50))
-        self.duplicate_filter = self.config.get(
-            "EVENT_REGISTRY_DUPLICATE_FILTER",
-            "skipDuplicates",
-        )
-        self.min_body_length = int(self.config.get("EVENT_REGISTRY_MIN_BODY_LENGTH", 600))
-        self.enable_url_fallback = bool(self.config.get("EVENT_REGISTRY_ENABLE_URL_FALLBACK", True))
-        self.language = str(self.config.get("EVENT_REGISTRY_LANG", "") or "").strip()
-        self.source_allowlist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_ALLOWLIST", ""))
-        self.source_blocklist = self._parse_csv_list(self.config.get("EVENT_REGISTRY_SOURCE_BLOCKLIST", ""))
+        self.articles_count = int(self.config.get("NEWS_API_PAGE_LIMIT", 50))
+        self.min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 600))
+        self.enable_url_fallback = bool(self.config.get("NEWS_API_ENABLE_URL_FALLBACK", True))
+        self.language = str(self.config.get("NEWS_API_LANGUAGE", "en") or "").strip()
+        self.source_allowlist = self._parse_csv_list(self.config.get("NEWS_SOURCE_ALLOWLIST", ""))
+        self.source_blocklist = self._parse_csv_list(self.config.get("NEWS_SOURCE_BLOCKLIST", ""))
         logger.info(
-            "Initialized Event Registry scraper | api_url=%s mentions_url=%s lang=%s source_rank=%s-%s",
+            "Initialized TheNewsAPI scraper | api_url=%s lang=%s limit=%s",
             self.api_url,
-            self.mentions_url,
             self.language or "<any>",
-            self.source_rank_start,
-            self.source_rank_end,
+            self.articles_count,
         )
 
     @staticmethod
-    def _resolve_event_registry_url(configured_url: Any, default_url: str, setting_name: str) -> str:
-        """Ensure configured URL points to Event Registry endpoints."""
+    def _resolve_news_api_base_url(configured_url: Any, default_url: str, setting_name: str) -> str:
+        """Ensure configured base URL points to TheNewsAPI endpoints."""
         candidate = str(configured_url or "").strip()
         if not candidate:
             return default_url
 
+        candidate = candidate.rstrip("/")
         normalized = candidate.lower()
-        if EVENT_REGISTRY_HOST in normalized:
+        if THENEWSAPI_HOST in normalized:
             return candidate
 
         logger.warning(
-            "%s is set to non-Event-Registry URL '%s'; falling back to '%s'",
+            "%s is set to non-TheNewsAPI URL '%s'; falling back to '%s'",
             setting_name,
             candidate,
             default_url,
@@ -169,7 +148,7 @@ class NewsArticleScraper:
                 if self.rate_limited:
                     break
 
-                mention_map = await self._fetch_mentions_for_term(term, date_params)
+                mention_map: Dict[str, Dict[str, str]] = {}
                 for raw in raw_articles:
                     article_data = await self._enrich_article_data(
                         raw_article=raw,
@@ -186,7 +165,7 @@ class NewsArticleScraper:
                     if self._persist_article(article_data):
                         all_articles.append(article_data)
 
-                logger.info("Processed %s Event Registry articles for term '%s'", len(raw_articles), term)
+                logger.info("Processed %s TheNewsAPI articles for term '%s'", len(raw_articles), term)
             except Exception as e:
                 logger.error("Error processing articles for term '%s': %s", term, e)
         return all_articles
@@ -210,7 +189,7 @@ class NewsArticleScraper:
             if not all_articles and date_filters:
                 fallback_filters = self._resolve_date_filters(None)
                 logger.warning(
-                    "No Event Registry results for term '%s' with date filters %s. "
+                    "No TheNewsAPI results for term '%s' with date filters %s. "
                     "Retrying with fallback window %s.",
                     term,
                     date_filters,
@@ -249,79 +228,69 @@ class NewsArticleScraper:
 
     def _build_articles_payload(self, term: str, page: int, date_filters: Dict[str, str]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
-            "action": "getArticles",
-            "apiKey": self.api_key,
-            "resultType": "articles",
-            "articlesPage": page,
-            "articlesCount": self.articles_count,
-            "articlesSortBy": "date",
-            "articlesSortByAsc": False,
-            "keywordLoc": "body,title",
-            "includeArticleTitle": True,
-            "includeArticleBasicInfo": True,
-            "includeArticleBody": True,
-            "articleBodyLen": -1,
-            "includeArticleEventUri": True,
-            "includeArticleConcepts": True,
-            "includeArticleCategories": True,
-            "includeArticleLocation": True,
-            "includeArticleExtractedDates": True,
-            "isDuplicateFilter": self.duplicate_filter,
-            "startSourceRankPercentile": self.source_rank_start,
-            "endSourceRankPercentile": self.source_rank_end,
+            "api_token": self.api_key,
+            "search": self._build_search_query(term),
+            "page": page,
+            "limit": self.articles_count,
         }
-        payload.update(self._build_keyword_payload(term))
         if self.language:
-            payload["lang"] = self.language
+            payload["language"] = self.language
         payload.update(date_filters)
         return payload
 
     async def _make_api_request(self, payload: dict) -> List[dict]:
-        """Make request to Event Registry getArticles."""
+        """Make request to TheNewsAPI /all endpoint."""
         if not isinstance(payload, dict):
             logger.error("_make_api_request expected dict payload, got %s", type(payload).__name__)
             return []
         if not isinstance(self.api_key, str) or not self.api_key.strip():
-            logger.error("Event Registry API key is missing; cannot fetch articles")
+            logger.error("TheNewsAPI token is missing; cannot fetch articles")
             return []
         if not self.api_url:
-            logger.error("Event Registry API URL is not configured")
+            logger.error("TheNewsAPI URL is not configured")
             return []
 
         try:
             async with aiohttp.ClientSession(timeout=CLIENT_TIMEOUT, trust_env=True) as session:
-                async with session.post(self.api_url, json=payload) as response:
+                async with session.get(self.api_url, params=payload) as response:
                     if response.status == 200:
                         data = await response.json()
                         api_error = self._extract_api_error_message(data)
                         if api_error:
                             logger.error(
-                                "Event Registry returned API error with HTTP 200: %s | payload=%s",
+                                "TheNewsAPI returned API error with HTTP 200: %s | params=%s",
                                 api_error,
                                 payload,
                             )
                             return []
                         return self._extract_articles_from_response(data)
                     if response.status in (HTTP_PAYMENT_REQUIRED, HTTP_TOO_MANY_REQUESTS):
-                        logger.warning("Rate limit/plan limit exceeded for Event Registry")
+                        logger.warning("Rate limit/plan limit exceeded for TheNewsAPI")
                         self.rate_limited = True
                         return []
                     if response.status == HTTP_UNAUTHORIZED:
-                        logger.error("Invalid Event Registry API key")
+                        logger.error("Invalid TheNewsAPI token")
+                        return []
+                    if response.status == HTTP_FORBIDDEN:
+                        logger.error("TheNewsAPI endpoint access restricted (403)")
+                        return []
+                    if response.status == HTTP_BAD_REQUEST:
+                        response_text = await response.text()
+                        logger.error("Malformed TheNewsAPI parameters: %s", response_text)
                         return []
                     response_text = await response.text()
                     logger.error(
-                        "Event Registry request failed with status %s | payload=%s | response=%s",
+                        "TheNewsAPI request failed with status %s | params=%s | response=%s",
                         response.status,
                         payload,
                         response_text,
                     )
                     return []
         except asyncio.TimeoutError:
-            logger.error("Event Registry request timed out")
+            logger.error("TheNewsAPI request timed out")
             return []
         except Exception as e:
-            logger.error("Event Registry request error: %s", e)
+            logger.error("TheNewsAPI request error: %s", e)
             return []
 
     def _extract_results_list(self, data: Dict[str, Any], nested_key: str) -> List[Dict[str, Any]]:
@@ -338,77 +307,10 @@ class NewsArticleScraper:
         return []
 
     def _extract_articles_from_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._extract_results_list(data, "articles")
-
-    async def _fetch_mentions_for_term(
-        self,
-        term: str,
-        date_params: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Dict[str, str]]:
-        """Fetch mention sentences by fixed event types and map them by article URL."""
-        if not isinstance(term, str) or not term.strip():
-            logger.warning("Skipping mentions fetch for empty/invalid term: %r", term)
-            return {}
-        if not isinstance(self.api_key, str) or not self.api_key.strip():
-            logger.warning("Event Registry API key is missing; skipping mentions fetch for term '%s'", term)
-            return {}
-        if not self.mentions_url:
-            logger.error("Event Registry mentions URL is not configured")
-            return {}
-
-        date_filters = self._resolve_date_filters(date_params)
-        payload: Dict[str, Any] = {
-            "apiKey": self.api_key,
-            "resultType": "mentions",
-            "mentionsPage": 1,
-            "mentionsCount": self.mentions_count,
-            "mentionsSortBy": "date",
-            "mentionsSortByAsc": False,
-            "eventTypeUri": self.event_type_uris,
-            "showDuplicates": False,
-        }
-        payload.update(self._build_keyword_payload(term))
-        if self.language:
-            payload["lang"] = self.language
-        payload.update(date_filters)
-
-        try:
-            await self._wait_for_rate_limit()
-            async with aiohttp.ClientSession(timeout=CLIENT_TIMEOUT, trust_env=True) as session:
-                async with session.post(self.mentions_url, json=payload) as response:
-                    if response.status != 200:
-                        response_text = await response.text()
-                        logger.warning(
-                            "Event Registry mentions request failed with status %s for term '%s' | response=%s",
-                            response.status,
-                            term,
-                            response_text,
-                        )
-                        return {}
-                    data = await response.json()
-                    api_error = self._extract_api_error_message(data)
-                    if api_error:
-                        logger.warning(
-                            "Event Registry mentions API error with HTTP 200 for term '%s': %s",
-                            term,
-                            api_error,
-                        )
-                        return {}
-        except Exception as e:
-            logger.warning("Event Registry mentions request failed for term '%s': %s", term, e)
-            return {}
-
-        mapping: Dict[str, Dict[str, str]] = {}
-        for mention in self._extract_mentions_from_response(data):
-            url = self._extract_mention_article_url(mention)
-            sentence = self._extract_mention_sentence(mention)
-            event_type_uri = self._extract_mention_event_type(mention)
-            if url and sentence and url not in mapping:
-                mapping[url] = {
-                    "incident_sentence": sentence,
-                    "event_type_uri": event_type_uri,
-                }
-        return mapping
+        if not isinstance(data, dict):
+            return []
+        articles = data.get("data", [])
+        return articles if isinstance(articles, list) else []
 
     def _extract_mentions_from_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._extract_results_list(data, "mentions")
@@ -445,7 +347,7 @@ class NewsArticleScraper:
 
         content = str(article_data.get("content", "") or "")
         if not self.enable_url_fallback or len(content) >= self.min_body_length:
-            article_data["body_source"] = "event_registry"
+            article_data["body_source"] = "thenewsapi"
             return
 
         fallback_text, status = await fetch_readable_text(
@@ -458,7 +360,7 @@ class NewsArticleScraper:
             article_data["full_text"] = fallback_text
             article_data["body_source"] = "url_fallback"
         else:
-            article_data["body_source"] = "event_registry"
+            article_data["body_source"] = "thenewsapi"
 
     async def _enrich_article_data(
         self,
@@ -517,7 +419,7 @@ class NewsArticleScraper:
 
     def _normalize_article(self, article: Dict[str, Any]) -> Dict[str, Any]:
         title = article.get("title") or article.get("articleTitle") or ""
-        body = article.get("body") or article.get("content") or article.get("description") or ""
+        body = article.get("description") or article.get("content") or article.get("body") or ""
         snippet = article.get("snippet") or ""
         if not body and snippet:
             body = snippet
@@ -545,6 +447,8 @@ class NewsArticleScraper:
             "image_url": image_url or "",
             "published_at": article.get("dateTimePub") or article.get("date") or article.get("published_at"),
             "publishedAt": article.get("dateTimePub") or article.get("date") or article.get("published_at"),
+            "uuid": article.get("uuid", ""),
+            "language": article.get("language", ""),
             "event_uri": event_uri or "",
             "concepts": json.dumps(concepts, ensure_ascii=False) if isinstance(concepts, (list, dict)) else str(concepts or ""),
             "categories": json.dumps(categories, ensure_ascii=False) if isinstance(categories, (list, dict)) else str(categories or ""),
@@ -586,7 +490,7 @@ class NewsArticleScraper:
 
             term_name = term.get("term", "")
             articles = await self._fetch_for_term(term_name, date_params)
-            mention_map = await self._fetch_mentions_for_term(term_name, date_params)
+            mention_map: Dict[str, Dict[str, str]] = {}
             self.partial_results.append(term_name)
 
             if articles:
@@ -603,34 +507,20 @@ class NewsArticleScraper:
 
         return all_articles
 
-    def _build_keyword_payload(self, term: str) -> Dict[str, Any]:
+    def _build_search_query(self, term: str) -> str:
         """
-        Build Event Registry keyword filter from user-entered term syntax.
+        Build TheNewsAPI search query from user-entered syntax.
 
-        Users often type operators like '+', '|', and brackets in the GUI.
-        For the `keyword` parameter we normalize those into keyword tokens
-        and use OR matching to avoid over-constraining the request.
+        TheNewsAPI supports operators such as +, -, | and quoted phrases.
+        We preserve those operators while normalizing whitespace and legacy
+        bracket syntax to standard parentheses.
         """
         raw = str(term or "").strip()
         if not raw:
-            return {"keyword": ""}
+            return ""
 
-        parts = [p.strip() for p in re.split(r"[+\|\[\]]", raw) if p.strip()]
-        if not parts:
-            return {"keyword": raw}
-
-        # Preserve order while removing duplicates.
-        seen = set()
-        keywords: List[str] = []
-        for part in parts:
-            token = re.sub(r"\s+", " ", part).strip()
-            if token and token.lower() not in seen:
-                keywords.append(token)
-                seen.add(token.lower())
-
-        if len(keywords) == 1:
-            return {"keyword": keywords[0]}
-        return {"keyword": keywords, "keywordOper": "or"}
+        normalized = raw.replace("[", "(").replace("]", ")")
+        return re.sub(r"\s+", " ", normalized).strip()
 
     def _is_source_allowed(self, article_data: Dict[str, Any]) -> bool:
         """Apply source allow/block filters using article URL domain."""
@@ -660,13 +550,13 @@ class NewsArticleScraper:
         self,
         date_params: Optional[Dict[str, str]],
     ) -> Dict[str, str]:
-        """Normalize date filters for Event Registry."""
+        """Normalize date filters for TheNewsAPI."""
         today = datetime.now(timezone.utc).date()
 
         if date_params is None:
             return {
-                "dateStart": (today - timedelta(days=30)).strftime("%Y-%m-%d"),
-                "dateEnd": today.strftime("%Y-%m-%d"),
+                "published_after": (today - timedelta(days=30)).strftime("%Y-%m-%d"),
+                "published_before": today.strftime("%Y-%m-%d"),
             }
 
         if not date_params:
@@ -677,11 +567,11 @@ class NewsArticleScraper:
         specific = date_params.get("published_on")
 
         if specific:
-            return {"dateStart": specific, "dateEnd": specific}
+            return {"published_on": specific}
 
         filters = {}
         if after:
-            filters["dateStart"] = after
+            filters["published_after"] = after
         if before:
-            filters["dateEnd"] = before
+            filters["published_before"] = before
         return filters

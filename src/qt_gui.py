@@ -50,7 +50,7 @@ class ApiValidationWorker(QThread):
 
     def run(self):
         try:
-            # Validate Event Registry API
+            # Validate TheNewsAPI token
             news_valid = asyncio.run(validate_news_api_key(self.news_key))
             
             # Validate OpenAI API
@@ -592,9 +592,9 @@ class NewsScraperGUI(QMainWindow):
         api_group = QGroupBox("API Configuration")
         api_layout = QVBoxLayout(api_group)
 
-        # Event Registry API
+        # TheNewsAPI token
         news_api_layout = QHBoxLayout()
-        news_api_layout.addWidget(QLabel("Event Registry API Key:"))
+        news_api_layout.addWidget(QLabel("TheNewsAPI Token:"))
         self.news_api_key = QLineEdit()
         self.news_api_key.setText(self.config_manager.get("NEWS_API_KEY", ""))
         self.news_api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -706,7 +706,7 @@ class NewsScraperGUI(QMainWindow):
             return
             
         if not news_valid:
-            QMessageBox.critical(self, "Error", "Invalid Event Registry API key")
+            QMessageBox.critical(self, "Error", "Invalid TheNewsAPI token")
             return
         if not openai_valid:
             QMessageBox.critical(self, "Error", "Invalid OpenAI API key")

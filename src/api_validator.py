@@ -13,52 +13,44 @@ def _has_valid_api_key(api_key: str, provider: str) -> bool:
     return False
 
 async def validate_news_api_key(api_key: str) -> bool:
-    """Validate Event Registry API key with a test request."""
-    if not _has_valid_api_key(api_key, "Event Registry"):
+    """Validate TheNewsAPI token with a test request."""
+    if not _has_valid_api_key(api_key, "TheNewsAPI"):
         return False
 
-    url = "https://eventregistry.org/api/v1/article/getArticles"
-    payload = {
-        "action": "getArticles",
-        "apiKey": api_key,
-        "resultType": "articles",
-        "articlesCount": 1,
-        "articlesPage": 1,
-        "keyword": "pharmaceutical",
-        "lang": "eng",
-    }
+    url = "https://api.thenewsapi.com/v1/news/top"
+    params = {"api_token": api_key, "limit": 1, "language": "en"}
     
     try:
         # trust_env=True allows corporate/VPN proxy env vars (HTTPS_PROXY, etc.)
         timeout = aiohttp.ClientTimeout(total=10, connect=5)
         async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
-            async with session.post(url, json=payload) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
-                    logger.info("Event Registry API key validated successfully")
+                    logger.info("TheNewsAPI token validated successfully")
                     return True
                 elif response.status == 401:
-                    logger.error("Invalid Event Registry API key (401)")
+                    logger.error("Invalid TheNewsAPI token (401)")
                     return False
                 elif response.status in (402, 429):
                     # 402 = usage limit reached, 429 = rate limit reached
                     body = await response.text()
                     logger.warning(
-                        "Event Registry API key appears valid but limits are reached "
+                        "TheNewsAPI token appears valid but limits are reached "
                         f"(status {response.status}): {body}"
                     )
                     return True
                 else:
                     body = await response.text()
                     logger.error(
-                        f"Event Registry validation failed with status {response.status}. "
+                        f"TheNewsAPI validation failed with status {response.status}. "
                         f"Response: {body}"
                     )
                     return False
     except asyncio.TimeoutError:
-        logger.error("Event Registry validation timed out")
+        logger.error("TheNewsAPI validation timed out")
         return False
     except Exception as e:
-        logger.error(f"Event Registry validation error: {e}")
+        logger.error(f"TheNewsAPI validation error: {e}")
         return False
 
 def validate_openai_api_key(api_key: str) -> bool:

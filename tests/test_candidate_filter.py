@@ -17,8 +17,8 @@ class MockConfig:
             "PRELLM_TOP_K_PER_TERM": 5,
             "PRELLM_STAGE3_ENABLED": False,
             "PRELLM_LOG_DROPS": False,
-            "EVENT_REGISTRY_SOURCE_ALLOWLIST": "",
-            "EVENT_REGISTRY_SOURCE_BLOCKLIST": "",
+            "NEWS_SOURCE_ALLOWLIST": "",
+            "NEWS_SOURCE_BLOCKLIST": "",
         }
         values.update(self.overrides)
         return values.get(key, default)

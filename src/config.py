@@ -31,20 +31,15 @@ DEFAULT_CONTEXT_MESSAGE = {
 DEFAULT_CONFIG = {
     "NEWS_API_KEY": "",
     "OPENAI_API_KEY": "",
-    "NEWS_API_URL": "https://eventregistry.org/api/v1/article/getArticles",
+    "NEWS_API_BASE_URL": "https://api.thenewsapi.com/v1/news",
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
-    "EVENT_REGISTRY_MENTIONS_URL": "https://eventregistry.org/api/v1/article/getMentions",
-    "EVENT_REGISTRY_ARTICLES_COUNT": 100,
-    "EVENT_REGISTRY_MENTIONS_COUNT": 100,
-    "EVENT_REGISTRY_SOURCE_RANK_START": 0,
-    "EVENT_REGISTRY_SOURCE_RANK_END": 50,
-    "EVENT_REGISTRY_LANG": "",
-    "EVENT_REGISTRY_SOURCE_ALLOWLIST": "",
-    "EVENT_REGISTRY_SOURCE_BLOCKLIST": "",
-    "EVENT_REGISTRY_DUPLICATE_FILTER": "skipDuplicates",
-    "EVENT_REGISTRY_MIN_BODY_LENGTH": 600,
-    "EVENT_REGISTRY_ENABLE_URL_FALLBACK": True,
+    "NEWS_API_PAGE_LIMIT": 50,
+    "NEWS_API_LANGUAGE": "en",
+    "NEWS_SOURCE_ALLOWLIST": "",
+    "NEWS_SOURCE_BLOCKLIST": "",
+    "NEWS_API_MIN_BODY_LENGTH": 600,
+    "NEWS_API_ENABLE_URL_FALLBACK": True,
     "PRELLM_ENABLE_FILTERING": True,
     "PRELLM_MIN_CONTENT_CHARS": 120,
     "PRELLM_MAX_CONTENT_CHARS": 20000,
@@ -69,7 +64,7 @@ DEFAULT_CONFIG = {
     "OUTPUT_DIR": "output",
 }
 
-EXPECTED_API_URL = "https://eventregistry.org/api/v1/article/getArticles"
+EXPECTED_API_URL = "https://api.thenewsapi.com/v1/news"
 EXPECTED_DB_PATH = "data/news_articles.db"
 EXPECTED_THRESHOLD = 0.7
 
@@ -86,7 +81,7 @@ def validate_config(config: Dict[str, Any]) -> List[str]:
     """Return list of warnings if config diverges from expected defaults."""
     warnings: List[str] = []
 
-    api_url = _first_non_null(config, "NEWS_API_URL", "api_base_url")
+    api_url = _first_non_null(config, "NEWS_API_BASE_URL", "NEWS_API_URL", "api_base_url")
     if not api_url:
         warnings.append("Missing API base URL")
     elif api_url != EXPECTED_API_URL:
@@ -237,18 +232,15 @@ class ConfigManager:
             "OPENAI_REQUESTS_PER_MINUTE": int,
             "BATCH_SIZE": int,
             "RELEVANCE_THRESHOLD": float,
-            "EVENT_REGISTRY_ARTICLES_COUNT": int,
-            "EVENT_REGISTRY_MENTIONS_COUNT": int,
-            "EVENT_REGISTRY_SOURCE_RANK_START": int,
-            "EVENT_REGISTRY_SOURCE_RANK_END": int,
-            "EVENT_REGISTRY_MIN_BODY_LENGTH": int,
+            "NEWS_API_PAGE_LIMIT": int,
+            "NEWS_API_MIN_BODY_LENGTH": int,
             "PRELLM_MIN_CONTENT_CHARS": int,
             "PRELLM_MAX_CONTENT_CHARS": int,
             "PRELLM_MIN_QUERY_TOKEN_OVERLAP": int,
             "PRELLM_TOP_K_PER_TERM": int,
         }
         bool_keys = {
-            "EVENT_REGISTRY_ENABLE_URL_FALLBACK",
+            "NEWS_API_ENABLE_URL_FALLBACK",
             "PRELLM_ENABLE_FILTERING",
             "PRELLM_REQUIRE_INCIDENT_SIGNAL",
             "PRELLM_DEDUP_BY_URL",
@@ -435,16 +427,14 @@ class ConfigManager:
                 logger.error("OPENAI_REQUESTS_PER_MINUTE must be positive")
                 return False
 
-            source_rank_start = int(self.config.get("EVENT_REGISTRY_SOURCE_RANK_START", 0))
-            source_rank_end = int(self.config.get("EVENT_REGISTRY_SOURCE_RANK_END", 100))
-            if not (0 <= source_rank_start <= 90 and source_rank_start % 10 == 0):
-                logger.error("EVENT_REGISTRY_SOURCE_RANK_START must be 0-90 and divisible by 10")
+            news_page_limit = int(self.config.get("NEWS_API_PAGE_LIMIT", 50))
+            if news_page_limit <= 0:
+                logger.error("NEWS_API_PAGE_LIMIT must be positive")
                 return False
-            if not (10 <= source_rank_end <= 100 and source_rank_end % 10 == 0):
-                logger.error("EVENT_REGISTRY_SOURCE_RANK_END must be 10-100 and divisible by 10")
-                return False
-            if source_rank_start >= source_rank_end:
-                logger.error("EVENT_REGISTRY_SOURCE_RANK_START must be less than EVENT_REGISTRY_SOURCE_RANK_END")
+
+            news_min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 0))
+            if news_min_body_length < 0:
+                logger.error("NEWS_API_MIN_BODY_LENGTH must be >= 0")
                 return False
 
             if int(self.config.get("PRELLM_MIN_CONTENT_CHARS", 0)) < 0:
