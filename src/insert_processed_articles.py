@@ -52,6 +52,7 @@ class RelevanceFilter(ArticleAnalysisMixin):
 
     def process_result(self, result: Dict):
         """Process a single result and insert relevant articles into cleaned_articles."""
+        raw_article_id = None
         try:
             # Load the raw_article_id
             raw_article_id = result.get("raw_article_id")

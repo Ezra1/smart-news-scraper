@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -30,19 +30,32 @@ def ensure_data_dir():
 
 
 @pytest.fixture
-def temp_db_inside_data(tmp_path):
-    db_path = tmp_path / "data" / "temp.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    db_path.touch()
-    return db_path
+def temp_db_inside_data():
+    data_dir = Path("data")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix="cli-test-", suffix=".db", dir=str(data_dir))
+    os.close(fd)
+    db_path = Path(temp_path)
+    try:
+        yield db_path
+    finally:
+        if db_path.exists():
+            db_path.unlink()
 
 
 @pytest.fixture
-def temp_search_terms_inside_data(tmp_path):
-    terms_path = tmp_path / "data" / "terms.txt"
-    terms_path.parent.mkdir(parents=True, exist_ok=True)
+def temp_search_terms_inside_data():
+    data_dir = Path("data")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix="terms-test-", suffix=".txt", dir=str(data_dir))
+    os.close(fd)
+    terms_path = Path(temp_path)
     terms_path.write_text("alpha\nbeta\n", encoding="utf-8")
-    return terms_path
+    try:
+        yield terms_path
+    finally:
+        if terms_path.exists():
+            terms_path.unlink()
 
 
 class DummyDB:
@@ -65,10 +78,6 @@ def _patch_pipeline(monkeypatch, db_instance, search_terms=None, processor_resul
         ProcessingResult(article={"id": 1, "title": "t", "content": "c", "url": "u"}, status="relevant")
     ]
 
-    # DatabaseManager returns our dummy
-    db_ctor = MagicMock(return_value=db_instance)
-    monkeypatch.setattr(cli, "DatabaseManager", db_ctor)
-
     # SearchTermManager mock
     stm = MagicMock()
     stm.get_search_terms.return_value = search_terms
@@ -86,13 +95,15 @@ def _patch_pipeline(monkeypatch, db_instance, search_terms=None, processor_resul
     # Scraper mock
     scraper = MagicMock()
     scraper.rate_limited = False
-    scraper.fetch_all_articles.return_value = [{"id": 1, "title": "t", "content": "c", "url": "u"}]
+    scraper.fetch_all_articles = AsyncMock(
+        return_value=[{"id": 1, "title": "t", "content": "c", "url": "u"}]
+    )
     scraper_cls = MagicMock(return_value=scraper)
     monkeypatch.setattr(cli, "NewsArticleScraper", scraper_cls)
 
     # Processor mock
     processor = MagicMock()
-    processor.process_articles.return_value = processor_results
+    processor.process_articles = AsyncMock(return_value=processor_results)
     processor_cls = MagicMock(return_value=processor)
     monkeypatch.setattr(cli, "ArticleProcessor", processor_cls)
 
@@ -107,8 +118,17 @@ def _patch_pipeline(monkeypatch, db_instance, search_terms=None, processor_resul
     extract_mock = MagicMock()
     monkeypatch.setattr(cli, "extract_cleaned_data", extract_mock)
 
+    create_pipeline_mock = MagicMock(
+        return_value={
+            "db_manager": db_instance,
+            "scraper": scraper,
+            "processor": processor,
+        }
+    )
+    monkeypatch.setattr(cli, "create_pipeline", create_pipeline_mock)
+
     return SimpleNamespace(
-        db_ctor=db_ctor,
+        create_pipeline_mock=create_pipeline_mock,
         search_term_manager=stm,
         article_manager=am,
         scraper=scraper,
@@ -134,10 +154,10 @@ class TestCLIWorkflow:
 
         asyncio.run(cli.main())
 
-        patches.db_ctor.assert_called_with(str(temp_db_inside_data))
-        # Ensure default path was never used
-        default_path = Path("data/news_articles.db").resolve()
-        assert patches.db_ctor.call_args[0][0] != str(default_path)
+        assert patches.create_pipeline_mock.call_count == 1
+        called_kwargs = patches.create_pipeline_mock.call_args.kwargs
+        assert called_kwargs["db_path"] == str(temp_db_inside_data)
+        assert "config_manager" in called_kwargs
 
     def test_cli_fetch_and_process_flow(self, monkeypatch, temp_db_inside_data, temp_search_terms_inside_data):
         """Happy-path: fetch, process, and export get invoked."""
@@ -154,10 +174,16 @@ class TestCLIWorkflow:
 
         asyncio.run(cli.main())
 
-        patches.scraper.fetch_all_articles.assert_called()
-        patches.processor.process_articles.assert_called()
-        patches.extract_mock.assert_called()
-        patches.relevance_filter.process_latest_results.assert_called()
+        patches.scraper.fetch_all_articles.assert_called_once_with([{"id": 1, "term": "alpha"}])
+        patches.processor.process_articles.assert_called_once_with(
+            [{"id": 1, "title": "t", "content": "c", "url": "u"}]
+        )
+        patches.relevance_filter.process_latest_results.assert_called_once_with()
+        patches.relevance_filter.analyze_results.assert_called_once_with()
+        assert patches.extract_mock.call_count == 1
+        extract_call = patches.extract_mock.call_args
+        assert extract_call.args[0] == str(temp_db_inside_data)
+        assert extract_call.args[1].endswith("relevant_articles.txt")
 
     def test_cli_handles_empty_search_terms(self, monkeypatch, temp_db_inside_data, temp_search_terms_inside_data):
         """CLI should exit gracefully when no search terms are present."""

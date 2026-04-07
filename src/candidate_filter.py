@@ -6,12 +6,17 @@ import hashlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 from urllib.parse import urlparse
 
 from src.database_manager import ArticleManager, DatabaseManager
 from src.incident_filter import is_incident_article
 from src.logger_config import setup_logging
+from src.utils.article_normalization import (
+    extract_source_name,
+    normalize_domain,
+    parse_csv_domain_list,
+)
 
 logger = setup_logging(__name__)
 
@@ -267,30 +272,15 @@ class CandidateFilter:
 
     @staticmethod
     def _normalize_domain(domain: str) -> str:
-        normalized = (domain or "").lower().strip()
-        if normalized.startswith("www."):
-            normalized = normalized[4:]
-        return normalized
+        return normalize_domain(domain)
 
     @staticmethod
     def _parse_csv_list(value: Any) -> set:
-        if not value:
-            return set()
-        if isinstance(value, (list, tuple, set)):
-            raw_values: Iterable[str] = value
-        else:
-            raw_values = str(value).split(",")
-        return {
-            CandidateFilter._normalize_domain(v.strip())
-            for v in raw_values
-            if str(v).strip()
-        }
+        return parse_csv_domain_list(value)
 
     @staticmethod
     def _source_name(source_value: Any) -> str:
-        if isinstance(source_value, dict):
-            return str(source_value.get("name") or source_value.get("title") or "")
-        return str(source_value or "")
+        return extract_source_name(source_value)
 
     @staticmethod
     def _stats_payload(stats: FilterStats, dropped_by_reason: Dict[str, int]) -> Dict[str, Any]:

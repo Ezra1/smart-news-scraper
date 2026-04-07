@@ -62,3 +62,17 @@ def test_mixin_delegates_to_utils():
 
     assert mixin_results == stats_dict
 
+
+def test_analyze_relevance_results_boundary_equal_split():
+    results = analyze_relevance_results(1, 1, 0.5)
+    assert results["relevant_percentage"] == 50.0
+    assert results["irrelevant_percentage"] == 50.0
+    assert results["conclusion"].startswith("⚠️")
+
+
+def test_analyze_relevance_results_infinite_ratio_when_no_irrelevant():
+    results = analyze_relevance_results(2, 0, 0.9)
+    assert results["relevance_ratio"] == float("inf")
+    assert results["relevance_ratio_str"] == "inf"
+    assert results["conclusion"].startswith("✅")
+

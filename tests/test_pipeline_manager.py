@@ -1,7 +1,7 @@
 """Tests for PipelineManager callback handling."""
 import asyncio
 import pytest
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, call
 
 from src.pipeline_manager import PipelineManager
 
@@ -82,8 +82,15 @@ class TestPipelineManagerCallbacks:
 
         asyncio.run(manager.fetch_articles(["term"]))
 
-        status_cb.assert_any_call("Starting article fetch...", False, False, False)
-        progress_cb.assert_any_call(1, 1)
+        status_cb.assert_has_calls(
+            [
+                call("Starting article fetch...", False, False, False),
+                call("Processing term 1/1: term (0 articles found)", False, False, False),
+                call("Completed fetch: 1 articles from 1/1 terms", False, False, True),
+            ],
+            any_order=False,
+        )
+        progress_cb.assert_called_once_with(1, 1)
 
     def test_progress_callback_called_when_provided(self):
         """Verify progress callbacks work when provided."""
@@ -115,7 +122,14 @@ class TestPipelineManagerCallbacks:
         result = asyncio.run(manager.fetch_articles(["term"]))
 
         assert result == [{"id": 2}]
-        status_cb.assert_any_call("Starting article fetch...", False, False, False)
+        status_cb.assert_has_calls(
+            [
+                call("Starting article fetch...", False, False, False),
+                call("Processing term 1/1: term (0 articles found)", False, False, False),
+                call("Completed fetch: 1 articles from 1/1 terms", False, False, True),
+            ],
+            any_order=False,
+        )
 
     def test_filter_candidates_invokes_funnel_and_returns_filtered(self):
         manager = PipelineManager(
@@ -142,5 +156,29 @@ class TestPipelineManagerCallbacks:
         )
 
         assert result == [{"id": 1, "title": "kept"}]
-        manager.candidate_filter.filter_candidates.assert_called_once()
+        manager.candidate_filter.filter_candidates.assert_called_once_with(
+            [{"id": 1}, {"id": 2}, {"id": 3}],
+            query_terms_by_id={1: "seized medicine"},
+        )
+
+    def test_fetch_articles_empty_terms_short_circuits(self):
+        status_cb = MagicMock()
+        manager = PipelineManager(
+            db_manager=DummyDBManager(),
+            config_manager=DummyConfigManager(),
+            scraper=DummyScraper([{"id": 1, "title": "ok"}]),
+            validator=DummyValidator(),
+        )
+        manager.set_callbacks(MagicMock(), status_cb)
+
+        result = asyncio.run(manager.fetch_articles([]))
+
+        assert result == []
+        status_cb.assert_has_calls(
+            [
+                call("Starting article fetch...", False, False, False),
+                call("Completed fetch: 0 articles from 0/0 terms", False, False, True),
+            ],
+            any_order=False,
+        )
 

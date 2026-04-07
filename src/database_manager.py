@@ -9,9 +9,10 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import threading
-from queue import Queue
+from queue import Empty, Queue
 
 from src.logger_config import setup_logging
+from src.utils.article_normalization import extract_source_name
 logger = setup_logging(__name__)
 
 class DatabaseManager:
@@ -57,6 +58,15 @@ class DatabaseManager:
     def _populate_pool(self):
         """Initialize connection pool"""
         for _ in range(self._connection_pool.maxsize):
+            self._connection_pool.put(self._create_connection())
+
+    def _create_connection(self):
+        """Create a configured SQLite connection with project defaults."""
+        if not self.db_path:
+            logger.error("Cannot create SQLite connection: db_path is empty")
+            raise ValueError("db_path is required")
+
+        try:
             conn = sqlite3.connect(
                 self.db_path,
                 timeout=60.0,
@@ -64,7 +74,10 @@ class DatabaseManager:
                 check_same_thread=False
             )
             conn.row_factory = sqlite3.Row
-            self._connection_pool.put(conn)
+            return conn
+        except sqlite3.Error as e:
+            logger.error(f"Failed to create SQLite connection for '{self.db_path}': {e}")
+            raise
 
     @contextmanager
     def get_connection(self):
@@ -77,17 +90,10 @@ class DatabaseManager:
             # If there's an error, don't reuse the connection
             try:
                 connection.close()
-            except Exception:
-                pass
+            except Exception as close_error:
+                logger.warning(f"Failed to close broken DB connection: {close_error}")
             # Create a new connection to replace the closed one
-            new_conn = sqlite3.connect(
-                self.db_path,
-                timeout=60.0,
-                isolation_level='IMMEDIATE',
-                check_same_thread=False
-            )
-            new_conn.row_factory = sqlite3.Row
-            self._connection_pool.put(new_conn)
+            self._connection_pool.put(self._create_connection())
             raise
         else:
             # Only put the connection back if no exception occurred
@@ -105,9 +111,11 @@ class DatabaseManager:
                     conn = self._connection_pool.get(block=False)
                     closed_connections.append(conn)
                     conn.close()
-                except Exception:
-                    # If we can't get a connection, just continue
-                    pass
+                except Empty:
+                    # Pool may become empty between the while-check and get().
+                    break
+                except sqlite3.Error as e:
+                    logger.warning(f"Error closing pooled SQLite connection: {e}")
                     
             # Log the number of connections closed
             logger.info(f"Closed {len(closed_connections)} database connections")
@@ -367,7 +375,7 @@ class ArticleManager:
             
             # Process source field
             source = article_data.get('source', '') or article_data.get('source_name', '')
-            data['source'] = source.get('name') if isinstance(source, dict) else str(source)
+            data['source'] = extract_source_name(source)
 
             # Normalize JSON-like metadata so sqlite gets a plain TEXT payload.
             for key in ['concepts', 'categories', 'location', 'extracted_dates']:
@@ -433,11 +441,9 @@ class ArticleManager:
 
     def get_article_by_id(self, article_id: int) -> Optional[Dict[str, Any]]:
         """Retrieve an article from the raw_articles table by its ID."""
-        query = "SELECT * FROM raw_articles WHERE id = ?"
-        result = self.db_manager.execute_query(query, (article_id,))
-        logger.info(f"get_article_by_id result: {result}")  
-        # Return the first item if result exists, otherwise None
-        return result[0] if result else None
+        result = self.get_articles(article_id=article_id)
+        logger.info(f"get_article_by_id result: {result}")
+        return result
 
     def insert_relevant_article(
         self,
@@ -701,8 +707,7 @@ class ArticleManager:
             
             # Extract source field properly
             source = article.get('source', 'Unknown Source')
-            if isinstance(source, dict):
-                source = source.get('name', 'Unknown Source')
+            source = extract_source_name(source, default='Unknown Source')
                 
             self.db_manager.execute_query(
                 query,

@@ -90,6 +90,13 @@ class PipelineManager:
         """
         self.context_message = context_message
 
+    def _return_if_cancelled(self, stage_name: str) -> Optional[List[dict]]:
+        """Return an empty result when pipeline cancellation is requested."""
+        if not self.cancelled:
+            return None
+        logger.warning("Pipeline cancelled during %s stage", stage_name)
+        return []
+
     async def execute_pipeline(self, search_terms: List[dict], date_params: Optional[dict] = None):
         """
         Execute the complete article processing pipeline.
@@ -107,6 +114,11 @@ class PipelineManager:
         Raises:
             Exception: If any phase of the pipeline fails
         """
+        if not isinstance(search_terms, list):
+            raise ValueError("search_terms must be a list of term objects")
+        if not search_terms:
+            return []
+
         try:
             # Reset cancellation flag for a new run
             self.cancelled = False
@@ -128,16 +140,16 @@ class PipelineManager:
             logger.info(f"Processing search terms: {terms}")
             
             articles = await self.fetch_articles(terms, date_params=date_params)
-            if self.cancelled:
-                logger.warning("Pipeline cancelled during fetch stage")
-                return []
+            cancelled_result = self._return_if_cancelled("fetch")
+            if cancelled_result is not None:
+                return cancelled_result
             if not articles:
                 return []
                 
             cleaned = await self.clean_articles(articles)
-            if self.cancelled:
-                logger.warning("Pipeline cancelled during cleaning stage")
-                return []
+            cancelled_result = self._return_if_cancelled("cleaning")
+            if cancelled_result is not None:
+                return cancelled_result
             if not cleaned:
                 return []
 
@@ -147,9 +159,9 @@ class PipelineManager:
                 if isinstance(term, dict) and term.get("id") is not None and term.get("term")
             }
             filtered = self.filter_candidates(cleaned, query_terms_by_id=query_terms_by_id)
-            if self.cancelled:
-                logger.warning("Pipeline cancelled during candidate filtering stage")
-                return []
+            cancelled_result = self._return_if_cancelled("candidate filtering")
+            if cancelled_result is not None:
+                return cancelled_result
             if not filtered:
                 return []
                 
@@ -165,11 +177,21 @@ class PipelineManager:
 
     async def fetch_articles(self, terms: List[str], date_params: Optional[dict] = None) -> List[dict]:
         """Fetch articles from news sources based on search terms."""
+        if terms is None:
+            self.status_callback("Completed fetch: 0 articles from 0/0 terms", False, False, True)
+            return []
+        if not isinstance(terms, list):
+            raise ValueError("terms must be a list")
+
         try:
             self.status_callback("Starting article fetch...", False, False, False)
+            if not terms:
+                self.status_callback("Completed fetch: 0 articles from 0/0 terms", False, False, True)
+                return []
             all_articles = []
             total_terms = len(terms)
             articles_fetched = 0  # Add counter
+            terms_processed = 0
             
             # Get search term IDs before fetching
             search_term_map = {}
@@ -183,6 +205,7 @@ class PipelineManager:
             
             # Process terms one by one with progress tracking
             for current_term, term in enumerate(terms, 1):
+                terms_processed = current_term
                 if self.cancelled:
                     logger.info("Fetch cancelled by user")
                     self.status_callback("Fetch stopped by user", False, True, False)
@@ -210,7 +233,6 @@ class PipelineManager:
 
             # Final status update
             articles_found = len(all_articles)
-            terms_processed = current_term
             self.status_callback(
                 f"Completed fetch: {articles_found} articles from {terms_processed}/{total_terms} terms", 
                 False, False, True
@@ -238,6 +260,13 @@ class PipelineManager:
         Raises:
             Exception: If article cleaning fails
         """
+        if articles is None:
+            return []
+        if not isinstance(articles, list):
+            raise ValueError("articles must be a list")
+        if not articles:
+            return []
+
         try:
             self.status_callback("Cleaning articles...", False, False, False)
             cleaned = []
@@ -288,12 +317,18 @@ class PipelineManager:
         Raises:
             Exception: If article analysis fails
         """
+        if articles is None:
+            return []
+        if not isinstance(articles, list):
+            raise ValueError("articles must be a list")
+        if not articles:
+            return []
+        if not self.processor:
+            self.status_callback("Analysis error: processor is not initialized", True, False, False)
+            return []
+
         try:
             self.status_callback("Analyzing articles...", False, False, False)
-
-            # Reset processor cancellation for this stage
-            if hasattr(self.processor, "cancelled"):
-                self.processor.cancelled = False
 
             # Forward progress from the processor to the callbacks
             self.processor.progress_callback = (
@@ -329,6 +364,12 @@ class PipelineManager:
 
     def filter_candidates(self, articles: List[dict], query_terms_by_id: Optional[dict] = None) -> List[dict]:
         """Apply pre-LLM filtering funnel and report stage metrics."""
+        if not isinstance(articles, list):
+            logger.error("filter_candidates expected list articles, got %s", type(articles).__name__)
+            return []
+        if not articles:
+            return []
+
         self.status_callback("Filtering candidates before LLM...", False, False, False)
         filtered, stats = self.candidate_filter.filter_candidates(
             articles,

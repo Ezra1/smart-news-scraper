@@ -25,8 +25,15 @@ async def fetch_readable_text(
         - parse_error
         - empty
     """
-    if not url:
+    if not isinstance(url, str) or not url.strip():
+        logger.warning("URL fallback called with empty/invalid URL: %r", url)
         return "", "empty"
+    if timeout_seconds <= 0:
+        logger.warning("URL fallback called with non-positive timeout_seconds=%s", timeout_seconds)
+        return "", "timeout"
+    if min_length < 0:
+        logger.warning("URL fallback called with negative min_length=%s", min_length)
+        return "", "parse_error"
 
     timeout = aiohttp.ClientTimeout(total=timeout_seconds, connect=7)
     try:
@@ -39,7 +46,11 @@ async def fetch_readable_text(
         logger.warning("URL fallback fetch failed for %s: %s", url, e)
         return "", "http_error"
     except TimeoutError:
+        logger.warning("URL fallback fetch timed out for %s", url)
         return "", "timeout"
+    except Exception as e:
+        logger.warning("URL fallback fetch failed unexpectedly for %s: %s", url, e)
+        return "", "http_error"
 
     try:
         soup = BeautifulSoup(html_text, "html.parser")

@@ -57,6 +57,10 @@ def test_valid_url_accepted(validator):
     }
     result = validator.clean_article(article)
     assert result is not None
+    assert result["url"] == "https://example.com/article"
+    assert result["title"] == "Test"
+    assert result["content"] == "Content"
+    assert result["published_at"] == ""
 
 
 def test_invalid_url_rejected(validator):
@@ -129,6 +133,46 @@ def test_empty_content_rejected(validator):
         "url": "https://example.com",
         "title": "Test",
         "content": "",
+    }
+    result = validator.clean_article(article)
+    assert result is None
+
+
+def test_rejects_non_mapping_article_input(validator):
+    result = validator.clean_article(None)
+    assert result is None
+
+
+def test_url_to_image_invalid_url_is_dropped(validator):
+    article = {
+        "url": "https://example.com",
+        "title": "Test",
+        "content": "Body",
+        "url_to_image": "javascript:alert(1)",
+    }
+    result = validator.clean_article(article)
+    assert result is not None
+    assert result["url_to_image"] is None
+
+
+def test_boundary_lengths_at_max_are_accepted(validator):
+    article = {
+        "url": "https://example.com",
+        "title": "t" * validator.MAX_TITLE_LENGTH,
+        "content": "c" * validator.MAX_CONTENT_LENGTH,
+    }
+    result = validator.clean_article(article)
+    assert result is not None
+    assert len(result["title"]) == validator.MAX_TITLE_LENGTH
+    assert len(result["content"]) == validator.MAX_CONTENT_LENGTH
+
+
+def test_malformed_date_rejected(validator):
+    article = {
+        "url": "https://example.com",
+        "title": "Test",
+        "content": "Body",
+        "published_at": "not-a-date",
     }
     result = validator.clean_article(article)
     assert result is None
