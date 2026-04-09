@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QTabWidget, QLineEdit, QFrame, QListWidget, QProgressBar,
     QScrollArea, QTreeWidget, QTreeWidgetItem, QMessageBox, QFileDialog,
     QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit,
-    QRadioButton, QDateEdit, QButtonGroup
+    QRadioButton, QDateEdit, QButtonGroup, QCheckBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate
 from PyQt6.QtGui import QFont, QIcon, QAction
@@ -39,6 +39,39 @@ from src.gui.status_parser import StatusParser, StatusUpdate
 from src.gui.processing_state import ProcessingState
 
 logger = setup_logging(__name__)
+
+SUPPORTED_LANGUAGES = [
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("pt", "Portuguese"),
+    ("ar", "Arabic"),
+    ("ru", "Russian"),
+    ("zh", "Chinese"),
+    ("hi", "Hindi"),
+]
+
+SUPPORTED_REGIONS = [
+    ("us", "United States"),
+    ("gb", "United Kingdom"),
+    ("ca", "Canada"),
+    ("au", "Australia"),
+    ("es", "Spain"),
+    ("mx", "Mexico"),
+    ("fr", "France"),
+    ("pt", "Portugal"),
+    ("br", "Brazil"),
+    ("ae", "UAE"),
+    ("sa", "Saudi Arabia"),
+    ("eg", "Egypt"),
+    ("ru", "Russia"),
+    ("kz", "Kazakhstan"),
+    ("cn", "China"),
+    ("hk", "Hong Kong"),
+    ("sg", "Singapore"),
+    ("tw", "Taiwan"),
+    ("in", "India"),
+]
 
 class ApiValidationWorker(QThread):
     finished = pyqtSignal(tuple)  # (news_valid, openai_valid, error_message)
@@ -639,6 +672,57 @@ class NewsScraperGUI(QMainWindow):
         self.date_range_widget = DateRangeWidget(self.config_manager)
         layout.addWidget(self.date_range_widget)
 
+        # High Recall + Multilingual Expansion Group
+        multilingual_group = QGroupBox("High-Recall Multilingual Search")
+        multilingual_layout = QVBoxLayout(multilingual_group)
+        self.high_recall_enabled = QCheckBox("Enable high-recall mode (balanced quality, higher volume)")
+        self.high_recall_enabled.setChecked(bool(self.config_manager.get("HIGH_RECALL_MODE", False)))
+        multilingual_layout.addWidget(self.high_recall_enabled)
+
+        multilingual_layout.addWidget(QLabel("Languages (primary control):"))
+        self.language_checkboxes = {}
+        language_row = QHBoxLayout()
+        language_row.setSpacing(8)
+        selected_languages = {
+            part.strip().lower()
+            for part in str(self.config_manager.get("QUERY_EXPANSION_LANGUAGES", "en")).split(",")
+            if part.strip()
+        }
+        for code, label in SUPPORTED_LANGUAGES:
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(code in selected_languages or (not selected_languages and code == "en"))
+            self.language_checkboxes[code] = checkbox
+            language_row.addWidget(checkbox)
+        language_row.addStretch()
+        multilingual_layout.addLayout(language_row)
+
+        self.auto_region_mapping = QCheckBox("Auto-map regions from selected languages")
+        self.auto_region_mapping.setChecked(bool(self.config_manager.get("AUTO_REGION_MAPPING_ENABLED", True)))
+        multilingual_layout.addWidget(self.auto_region_mapping)
+
+        self.region_override_enabled = QCheckBox("Advanced: manually override regions")
+        self.region_override_enabled.setChecked(bool(self.config_manager.get("REGION_OVERRIDE_ENABLED", False)))
+        multilingual_layout.addWidget(self.region_override_enabled)
+
+        self.region_checkboxes = {}
+        region_row = QHBoxLayout()
+        region_row.setSpacing(8)
+        selected_regions = {
+            part.strip().lower()
+            for part in str(self.config_manager.get("QUERY_EXPANSION_REGIONS", "")).split(",")
+            if part.strip()
+        }
+        for code, label in SUPPORTED_REGIONS:
+            checkbox = QCheckBox(label)
+            checkbox.setChecked(code in selected_regions)
+            self.region_checkboxes[code] = checkbox
+            region_row.addWidget(checkbox)
+        region_row.addStretch()
+        multilingual_layout.addLayout(region_row)
+        self.region_override_enabled.toggled.connect(self._toggle_region_override_controls)
+        self._toggle_region_override_controls(self.region_override_enabled.isChecked())
+        layout.addWidget(multilingual_group)
+
         # Add ChatGPT Context Message group
         context_group = QGroupBox("ChatGPT Context Message")
         context_layout = QVBoxLayout(context_group)
@@ -719,6 +803,13 @@ class NewsScraperGUI(QMainWindow):
                 "NEWS_API_KEY": self.news_api_key.text().strip(),
                 "OPENAI_API_KEY": self.openai_api_key.text().strip(),
                 "RELEVANCE_THRESHOLD": self.threshold_slider.value() / 100,
+                "HIGH_RECALL_MODE": self.high_recall_enabled.isChecked(),
+                "QUERY_EXPANSION_ENABLED": True,
+                "QUERY_EXPANSION_USE_AI": True,
+                "QUERY_EXPANSION_LANGUAGES": self._selected_languages_csv(),
+                "REGION_OVERRIDE_ENABLED": self.region_override_enabled.isChecked(),
+                "QUERY_EXPANSION_REGIONS": self._selected_regions_csv(),
+                "AUTO_REGION_MAPPING_ENABLED": self.auto_region_mapping.isChecked(),
                 "CHATGPT_CONTEXT_MESSAGE": {
                     "role": "system",
                     "content": self.context_message.toPlainText()
@@ -1067,6 +1158,24 @@ class NewsScraperGUI(QMainWindow):
 
     def _update_threshold_label(self):
         self.threshold_label.setText(f"{self.threshold_slider.value() / 100:.2f}")
+
+    def _selected_languages_csv(self) -> str:
+        selected = [code for code, checkbox in self.language_checkboxes.items() if checkbox.isChecked()]
+        if not selected:
+            selected = ["en"]
+            if "en" in self.language_checkboxes:
+                self.language_checkboxes["en"].setChecked(True)
+        return ",".join(selected)
+
+    def _selected_regions_csv(self) -> str:
+        if not self.region_override_enabled.isChecked():
+            return ""
+        selected = [code for code, checkbox in self.region_checkboxes.items() if checkbox.isChecked()]
+        return ",".join(selected)
+
+    def _toggle_region_override_controls(self, enabled: bool):
+        for checkbox in self.region_checkboxes.values():
+            checkbox.setEnabled(enabled)
 
     def _refresh_search_terms(self):
         self.terms_list.clear()

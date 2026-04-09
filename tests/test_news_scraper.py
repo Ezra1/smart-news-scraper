@@ -117,7 +117,7 @@ def test_build_search_query_normalizes_whitespace(scraper):
 def test_fetch_for_term_retries_with_fallback_date_window(monkeypatch, scraper):
     calls = []
 
-    async def fake_fetch_articles_pages(term, date_filters):
+    async def fake_fetch_articles_pages(term, date_filters, query_spec=None):
         calls.append((term, date_filters))
         # Simulate the original failure mode: zero results with explicit dates.
         if date_filters == {"published_after": "2024-11-03", "published_before": "2026-01-05"}:

@@ -58,6 +58,7 @@ class NewsArticleScraper:
         requests_per_second = config_manager.get("NEWS_API_REQUESTS_PER_SECOND", 1)
         self.rate_limiter = RateLimiter(requests_per_second=requests_per_second)
         self.articles_count = int(self.config.get("NEWS_API_PAGE_LIMIT", 50))
+        self.max_pages_per_query = int(self.config.get("FETCH_MAX_PAGES_PER_QUERY", MAX_ARTICLE_PAGES))
         self.min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 600))
         self.enable_url_fallback = bool(self.config.get("NEWS_API_ENABLE_URL_FALLBACK", True))
         self.language = str(self.config.get("NEWS_API_LANGUAGE", "en") or "").strip()
@@ -122,7 +123,7 @@ class NewsArticleScraper:
 
     async def fetch_articles(
         self,
-        search_terms: List[str],
+        search_terms: List[Any],
         search_term_map: Dict[str, int],
         date_params: Optional[Dict[str, str]] = None,
     ) -> List[dict]:
@@ -139,12 +140,15 @@ class NewsArticleScraper:
         all_articles = []
         self.rate_limited = False
 
-        for term in search_terms:
-            if not isinstance(term, str) or not term.strip():
-                logger.warning("Skipping invalid search term: %r", term)
+        for term_entry in search_terms:
+            query_spec = self._normalize_query_spec(term_entry)
+            if not query_spec:
+                logger.warning("Skipping invalid search term: %r", term_entry)
                 continue
+            term = query_spec["term"]
+            root_term = query_spec["root_term"]
             try:
-                raw_articles = await self._fetch_for_term(term, date_params)
+                raw_articles = await self._fetch_for_term(term, date_params, query_spec=query_spec)
                 if self.rate_limited:
                     break
 
@@ -152,7 +156,7 @@ class NewsArticleScraper:
                 for raw in raw_articles:
                     article_data = await self._enrich_article_data(
                         raw_article=raw,
-                        search_term_id=search_term_map.get(term),
+                        search_term_id=search_term_map.get(root_term),
                         mention_map=mention_map,
                         preserve_existing_mention_values=True,
                     )
@@ -165,15 +169,52 @@ class NewsArticleScraper:
                     if self._persist_article(article_data):
                         all_articles.append(article_data)
 
-                logger.info("Processed %s TheNewsAPI articles for term '%s'", len(raw_articles), term)
+                logger.info(
+                    "Processed %s TheNewsAPI articles for term='%s' (root='%s', lang='%s', regions=%s)",
+                    len(raw_articles),
+                    term,
+                    root_term,
+                    query_spec.get("language", ""),
+                    query_spec.get("regions", []),
+                )
             except Exception as e:
                 logger.error("Error processing articles for term '%s': %s", term, e)
         return all_articles
+
+    def _normalize_query_spec(self, term_entry: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(term_entry, str):
+            term = term_entry.strip()
+            if not term:
+                return None
+            return {
+                "term": term,
+                "root_term": term,
+                "language": self.language,
+                "regions": [],
+            }
+        if isinstance(term_entry, dict):
+            term = str(term_entry.get("term", "")).strip()
+            if not term:
+                return None
+            root_term = str(term_entry.get("root_term", term)).strip() or term
+            language = str(term_entry.get("language", self.language) or "").strip()
+            regions = term_entry.get("regions", [])
+            if not isinstance(regions, list):
+                regions = []
+            regions = [str(r).strip().lower() for r in regions if str(r).strip()]
+            return {
+                "term": term,
+                "root_term": root_term,
+                "language": language,
+                "regions": regions,
+            }
+        return None
 
     async def _fetch_for_term(
         self,
         term: str,
         date_params: Optional[Dict[str, str]] = None,
+        query_spec: Optional[Dict[str, Any]] = None,
     ) -> List[Dict]:
         if not isinstance(term, str) or not term.strip():
             logger.warning("Skipping fetch for empty/invalid term: %r", term)
@@ -182,7 +223,7 @@ class NewsArticleScraper:
         logger.info("Fetching articles for term: %s", term)
         try:
             date_filters = self._resolve_date_filters(date_params)
-            all_articles = await self._fetch_articles_pages(term, date_filters)
+            all_articles = await self._fetch_articles_pages(term, date_filters, query_spec=query_spec)
 
             # If user-provided date filters are too restrictive for the account
             # window, retry with the default recent window before giving up.
@@ -195,7 +236,7 @@ class NewsArticleScraper:
                     date_filters,
                     fallback_filters,
                 )
-                all_articles = await self._fetch_articles_pages(term, fallback_filters)
+                all_articles = await self._fetch_articles_pages(term, fallback_filters, query_spec=query_spec)
                 for article in all_articles:
                     if isinstance(article, dict):
                         article["_retrieved_via_fallback_window"] = True
@@ -206,7 +247,12 @@ class NewsArticleScraper:
             logger.error("Error fetching articles for term '%s': %s", term, e)
             return []
 
-    async def _fetch_articles_pages(self, term: str, date_filters: Dict[str, str]) -> List[Dict]:
+    async def _fetch_articles_pages(
+        self,
+        term: str,
+        date_filters: Dict[str, str],
+        query_spec: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict]:
         if not isinstance(term, str) or not term.strip():
             logger.warning("_fetch_articles_pages called with empty/invalid term: %r", term)
             return []
@@ -215,9 +261,10 @@ class NewsArticleScraper:
             return []
 
         all_articles: List[Dict] = []
-        for page in range(1, MAX_ARTICLE_PAGES + 1):
+        max_pages = max(1, int(self.max_pages_per_query or MAX_ARTICLE_PAGES))
+        for page in range(1, max_pages + 1):
             await self._wait_for_rate_limit()
-            payload = self._build_articles_payload(term, page, date_filters)
+            payload = self._build_articles_payload(term, page, date_filters, query_spec=query_spec)
             page_articles = await self._make_api_request(payload)
             if not page_articles:
                 break
@@ -226,15 +273,29 @@ class NewsArticleScraper:
                 break
         return all_articles
 
-    def _build_articles_payload(self, term: str, page: int, date_filters: Dict[str, str]) -> Dict[str, Any]:
+    def _build_articles_payload(
+        self,
+        term: str,
+        page: int,
+        date_filters: Dict[str, str],
+        query_spec: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "api_token": self.api_key,
             "search": self._build_search_query(term),
             "page": page,
             "limit": self.articles_count,
         }
-        if self.language:
-            payload["language"] = self.language
+        language = self.language
+        regions: List[str] = []
+        if isinstance(query_spec, dict):
+            language = str(query_spec.get("language", language) or "").strip()
+            regions = query_spec.get("regions", []) if isinstance(query_spec.get("regions", []), list) else []
+        if language:
+            payload["language"] = language
+        if regions:
+            # TheNewsAPI accepts comma-separated countries for broad geo targeting.
+            payload["countries"] = ",".join(regions)
         payload.update(date_filters)
         return payload
 

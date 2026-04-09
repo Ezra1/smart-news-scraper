@@ -17,13 +17,40 @@ logger = setup_logging(__name__)
 DEFAULT_CONTEXT_MESSAGE = {
     "role": "system",
     "content": (
-        "Score this article for pharmaceutical crime INCIDENTS (not commentary). "
-        "HIGH SCORE (0.8-1.0): confirmed enforcement events like seizures, arrests, "
-        "raids, and regulatory recalls/enforcement against unauthorized medicines. "
-        "LOW SCORE (0.0-0.4): policy/trend commentary, cybersecurity-only stories, "
-        "or non-pharma content. Return strict JSON with relevance_score, explanation, "
-        "event, who_entities, where_location, impact, urgency, and why_it_matters. "
-        "Keep fields factual, concise, and specific to the provided evidence."
+        "You are an intelligence relevance classifier for a pharmaceutical security "
+        "analysis team.\n\n"
+        "Your task is to assess whether a news article contains information relevant "
+        "to pharmaceutical security threats and assign a relevance score.\n\n"
+        "RELEVANCE CRITERIA (STRICT)\n\n"
+        "Relevant content includes specific, real-world incidents or risks involving:\n\n"
+        "Counterfeit or falsified medicines\n"
+        "Theft, diversion, or illegal resale of pharmaceuticals\n"
+        "Smuggling or trafficking involving pharmaceutical products\n"
+        "Supply chain compromise or disruption (manufacturing, distribution, logistics)\n"
+        "Regulatory or law enforcement actions related to pharmaceutical crime\n"
+        "Cyberattacks targeting pharmaceutical companies or infrastructure\n"
+        "Product tampering, contamination, or integrity threats\n"
+        "EXCLUDE (NOT RELEVANT)\n\n"
+        "Do NOT consider relevant:\n\n"
+        "General healthcare or medical news\n"
+        "Business/financial news without a security component\n"
+        "Public health trends without criminal or security relevance\n"
+        "Opinion or analysis without concrete events\n"
+        "SCORING GUIDANCE\n\n"
+        "Assign a relevance_score from 0.0 to 1.0:\n\n"
+        "0.0-0.2 -> Not relevant\n"
+        "0.3-0.5 -> Weak or indirect relevance\n"
+        "0.6-0.8 -> Moderate relevance (clear issue, limited specificity or impact)\n"
+        "0.9-1.0 -> High relevance (direct, specific, actionable threat)\n"
+        "DECISION RULES\n"
+        "Prioritize pharmaceutical security content only, ignore unrelated portions\n"
+        "If relevance is partial, score proportionally\n"
+        "Default lower if uncertain or evidence is vague\n"
+        "Favor specific incidents, actors, or enforcement actions over general discussion\n"
+        "EXPLANATION REQUIREMENT\n\n"
+        "Provide a concise explanation (1-2 sentences) that:\n\n"
+        "References the specific element that triggered relevance\n"
+        "Uses concrete language (no vague summaries)"
     ),
 }
 
@@ -35,6 +62,7 @@ DEFAULT_CONFIG = {
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
     "NEWS_API_PAGE_LIMIT": 50,
+    "FETCH_MAX_PAGES_PER_QUERY": 5,
     "NEWS_API_LANGUAGE": "en",
     "NEWS_SOURCE_ALLOWLIST": "",
     "NEWS_SOURCE_BLOCKLIST": "",
@@ -53,6 +81,18 @@ DEFAULT_CONFIG = {
     "PRELLM_ENABLE_LLM_GUARDRAIL": True,
     "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
+    "HIGH_RECALL_MODE": False,
+    "HIGH_RECALL_RELEVANCE_THRESHOLD": 0.6,
+    "QUERY_EXPANSION_ENABLED": True,
+    "QUERY_EXPANSION_USE_AI": True,
+    "QUERY_EXPANSION_VARIANTS_PER_TERM": 3,
+    "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 120,
+    "QUERY_EXPANSION_LANGUAGES": "en,es,fr,pt,ar,ru,zh,hi",
+    "REGION_OVERRIDE_ENABLED": False,
+    "QUERY_EXPANSION_REGIONS": "",
+    "AUTO_REGION_MAPPING_ENABLED": True,
+    "REQUEST_BUDGET_MODE": "aggressive",
+    "REQUEST_BUDGET_PER_RUN": 200,
     "DATE_RANGE_MODE": "preset",
     "DATE_RANGE_PRESET": "Last 7 days",
     "DATE_RANGE_AFTER": "",
@@ -233,11 +273,16 @@ class ConfigManager:
             "BATCH_SIZE": int,
             "RELEVANCE_THRESHOLD": float,
             "NEWS_API_PAGE_LIMIT": int,
+            "FETCH_MAX_PAGES_PER_QUERY": int,
             "NEWS_API_MIN_BODY_LENGTH": int,
             "PRELLM_MIN_CONTENT_CHARS": int,
             "PRELLM_MAX_CONTENT_CHARS": int,
             "PRELLM_MIN_QUERY_TOKEN_OVERLAP": int,
             "PRELLM_TOP_K_PER_TERM": int,
+            "QUERY_EXPANSION_VARIANTS_PER_TERM": int,
+            "QUERY_EXPANSION_MAX_TOTAL_QUERIES": int,
+            "REQUEST_BUDGET_PER_RUN": int,
+            "HIGH_RECALL_RELEVANCE_THRESHOLD": float,
         }
         bool_keys = {
             "NEWS_API_ENABLE_URL_FALLBACK",
@@ -248,6 +293,11 @@ class ConfigManager:
             "PRELLM_STAGE3_ENABLED",
             "PRELLM_LOG_DROPS",
             "PRELLM_ENABLE_LLM_GUARDRAIL",
+            "HIGH_RECALL_MODE",
+            "QUERY_EXPANSION_ENABLED",
+            "QUERY_EXPANSION_USE_AI",
+            "REGION_OVERRIDE_ENABLED",
+            "AUTO_REGION_MAPPING_ENABLED",
         }
         
         env_config = {}
@@ -431,6 +481,10 @@ class ConfigManager:
             if news_page_limit <= 0:
                 logger.error("NEWS_API_PAGE_LIMIT must be positive")
                 return False
+            max_pages_per_query = int(self.config.get("FETCH_MAX_PAGES_PER_QUERY", 5))
+            if max_pages_per_query <= 0:
+                logger.error("FETCH_MAX_PAGES_PER_QUERY must be positive")
+                return False
 
             news_min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 0))
             if news_min_body_length < 0:
@@ -457,6 +511,20 @@ class ConfigManager:
 
             if int(self.config.get("PRELLM_TOP_K_PER_TERM", 0)) < 0:
                 logger.error("PRELLM_TOP_K_PER_TERM must be >= 0")
+                return False
+            if int(self.config.get("QUERY_EXPANSION_VARIANTS_PER_TERM", 0)) < 0:
+                logger.error("QUERY_EXPANSION_VARIANTS_PER_TERM must be >= 0")
+                return False
+            if int(self.config.get("QUERY_EXPANSION_MAX_TOTAL_QUERIES", 0)) < 0:
+                logger.error("QUERY_EXPANSION_MAX_TOTAL_QUERIES must be >= 0")
+                return False
+            if int(self.config.get("REQUEST_BUDGET_PER_RUN", 0)) <= 0:
+                logger.error("REQUEST_BUDGET_PER_RUN must be positive")
+                return False
+
+            high_recall_threshold = float(self.config.get("HIGH_RECALL_RELEVANCE_THRESHOLD", 0.6))
+            if not 0 <= high_recall_threshold <= 1:
+                logger.error("HIGH_RECALL_RELEVANCE_THRESHOLD must be between 0 and 1")
                 return False
 
             # Batch size validation

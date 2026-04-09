@@ -1,0 +1,51 @@
+from src.query_expander import build_settings, expand_terms_to_queries
+
+
+class DummyConfig:
+    def __init__(self, overrides=None):
+        self.overrides = overrides or {}
+
+    def get(self, key, default=None):
+        return self.overrides.get(key, default)
+
+
+def test_expand_terms_with_fallback_and_caps():
+    config = DummyConfig(
+        {
+            "QUERY_EXPANSION_ENABLED": True,
+            "QUERY_EXPANSION_USE_AI": False,
+            "QUERY_EXPANSION_LANGUAGES": "en,es",
+            "QUERY_EXPANSION_VARIANTS_PER_TERM": 2,
+            "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 3,
+            "AUTO_REGION_MAPPING_ENABLED": True,
+            "REGION_OVERRIDE_ENABLED": False,
+        }
+    )
+    settings = build_settings(config)
+    expanded = expand_terms_to_queries(["counterfeit medicine"], settings)
+
+    assert len(expanded) == 3
+    assert expanded[0].root_term == "counterfeit medicine"
+    assert expanded[0].language in {"en", "es"}
+    assert isinstance(expanded[0].regions, list)
+
+
+def test_expand_terms_with_region_override():
+    config = DummyConfig(
+        {
+            "QUERY_EXPANSION_ENABLED": True,
+            "QUERY_EXPANSION_USE_AI": False,
+            "QUERY_EXPANSION_LANGUAGES": "en",
+            "QUERY_EXPANSION_VARIANTS_PER_TERM": 1,
+            "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 5,
+            "AUTO_REGION_MAPPING_ENABLED": True,
+            "REGION_OVERRIDE_ENABLED": True,
+            "QUERY_EXPANSION_REGIONS": "de,nl",
+        }
+    )
+    settings = build_settings(config)
+    expanded = expand_terms_to_queries(["smuggled medicine"], settings)
+
+    assert expanded
+    assert expanded[0].regions == ["de", "nl"]
+

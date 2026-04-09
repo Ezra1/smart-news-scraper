@@ -5,6 +5,7 @@
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
     "NEWS_API_PAGE_LIMIT": 50,
+    "FETCH_MAX_PAGES_PER_QUERY": 5,
     "NEWS_API_LANGUAGE": "en",
     "NEWS_SOURCE_ALLOWLIST": "",
     "NEWS_SOURCE_BLOCKLIST": "",
@@ -12,12 +13,24 @@
     "NEWS_API_ENABLE_URL_FALLBACK": true,
     "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
+    "HIGH_RECALL_MODE": false,
+    "HIGH_RECALL_RELEVANCE_THRESHOLD": 0.6,
+    "QUERY_EXPANSION_ENABLED": true,
+    "QUERY_EXPANSION_USE_AI": true,
+    "QUERY_EXPANSION_VARIANTS_PER_TERM": 3,
+    "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 120,
+    "QUERY_EXPANSION_LANGUAGES": "en,es,fr,pt,ar,ru,zh,hi",
+    "REGION_OVERRIDE_ENABLED": false,
+    "QUERY_EXPANSION_REGIONS": "",
+    "AUTO_REGION_MAPPING_ENABLED": true,
+    "REQUEST_BUDGET_MODE": "aggressive",
+    "REQUEST_BUDGET_PER_RUN": 200,
     "BATCH_SIZE": 100,
     "DATABASE_PATH": "data/news_articles.db",
     "LOGGING_LEVEL": "INFO",
     "OUTPUT_DIR": "output",
     "CHATGPT_CONTEXT_MESSAGE": {
         "role": "system",
-        "content": "You are assessing relevance for a pharmaceutical security intelligence analysis team. Examine each news article and decide whether it discusses threats such as counterfeit medication, theft, diversion, smuggling, supply chain disruption or any other security issue in the pharmaceutical sector. Provide a relevance score from 0 (not relevant) to 1 (highly relevant) and a short explanation."
+        "content": "You are an intelligence relevance classifier for a pharmaceutical security analysis team.\n\nYour task is to assess whether a news article contains information relevant to pharmaceutical security threats and assign a relevance score.\n\nRELEVANCE CRITERIA (STRICT)\n\nRelevant content includes specific, real-world incidents or risks involving:\n\nCounterfeit or falsified medicines\nTheft, diversion, or illegal resale of pharmaceuticals\nSmuggling or trafficking involving pharmaceutical products\nSupply chain compromise or disruption (manufacturing, distribution, logistics)\nRegulatory or law enforcement actions related to pharmaceutical crime\nCyberattacks targeting pharmaceutical companies or infrastructure\nProduct tampering, contamination, or integrity threats\nEXCLUDE (NOT RELEVANT)\n\nDo NOT consider relevant:\n\nGeneral healthcare or medical news\nBusiness/financial news without a security component\nPublic health trends without criminal or security relevance\nOpinion or analysis without concrete events\nSCORING GUIDANCE\n\nAssign a relevance_score from 0.0 to 1.0:\n\n0.0-0.2 -> Not relevant\n0.3-0.5 -> Weak or indirect relevance\n0.6-0.8 -> Moderate relevance (clear issue, limited specificity or impact)\n0.9-1.0 -> High relevance (direct, specific, actionable threat)\nDECISION RULES\nPrioritize pharmaceutical security content only, ignore unrelated portions\nIf relevance is partial, score proportionally\nDefault lower if uncertain or evidence is vague\nFavor specific incidents, actors, or enforcement actions over general discussion\nEXPLANATION REQUIREMENT\n\nProvide a concise explanation (1-2 sentences) that:\n\nReferences the specific element that triggered relevance\nUses concrete language (no vague summaries)"
     }
 }

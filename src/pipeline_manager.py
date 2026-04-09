@@ -6,6 +6,8 @@ from src.article_validator import ArticleValidator
 from src.database_manager import DatabaseManager
 from src.config import ConfigManager
 from src.logger_config import setup_logging
+from src.query_expander import build_settings, expand_terms_to_queries
+from src.request_budget import apply_budget_to_queries, resolve_request_budget
 
 logger = setup_logging(__name__)
 
@@ -127,6 +129,12 @@ class PipelineManager:
             if not self.config_manager.validate():
                 raise ValueError("Configuration validation failed - check API keys")
 
+            effective_threshold = float(self.config_manager.get("RELEVANCE_THRESHOLD", 0.7))
+            if bool(self.config_manager.get("HIGH_RECALL_MODE", False)):
+                effective_threshold = float(
+                    self.config_manager.get("HIGH_RECALL_RELEVANCE_THRESHOLD", effective_threshold)
+                )
+
             # Initialize processor with current config
             if not self.processor:
                 self.processor = ArticleProcessor(
@@ -135,6 +143,7 @@ class PipelineManager:
                     config_manager=self.config_manager
                 )
                 logger.info("Created new ArticleProcessor with current config")
+            self.processor.RELEVANCE_THRESHOLD = effective_threshold
 
             terms = [term['term'] for term in search_terms if isinstance(term, dict) and 'term' in term]
             logger.info(f"Processing search terms: {terms}")
@@ -192,7 +201,7 @@ class PipelineManager:
             total_terms = len(terms)
             articles_fetched = 0  # Add counter
             terms_processed = 0
-            
+
             # Get search term IDs before fetching
             search_term_map = {}
             for term in terms:
@@ -202,39 +211,79 @@ class PipelineManager:
                 )
                 if result:
                     search_term_map[term] = result[0]['id']
-            
-            # Process terms one by one with progress tracking
-            for current_term, term in enumerate(terms, 1):
+
+            expansion_settings = build_settings(self.config_manager)
+            expanded_queries = expand_terms_to_queries(terms, expansion_settings)
+            if not expanded_queries:
+                expanded_queries = [
+                    type("QueryItem", (), {"term": term, "root_term": term, "language": "", "regions": [], "priority": idx})
+                    for idx, term in enumerate(terms)
+                ]
+
+            budget = resolve_request_budget(
+                mode=str(self.config_manager.get("REQUEST_BUDGET_MODE", "aggressive")),
+                configured_budget=int(self.config_manager.get("REQUEST_BUDGET_PER_RUN", 0)),
+            )
+            planned_queries = apply_budget_to_queries(expanded_queries, budget)
+            if not planned_queries:
+                self.status_callback("Completed fetch: 0 articles from 0/0 terms", False, False, True)
+                return []
+
+            # Process expanded queries one by one with progress tracking
+            total_queries = len(planned_queries)
+            for current_term, query in enumerate(planned_queries, 1):
                 terms_processed = current_term
                 if self.cancelled:
                     logger.info("Fetch cancelled by user")
                     self.status_callback("Fetch stopped by user", False, True, False)
                     break
-                self.status_callback(f"Processing term {current_term}/{total_terms}: {term} ({articles_fetched} articles found)", False, False, False)
-                self.progress_callback(current_term, total_terms)
-                
-                # Pass single term to scraper
+                self.status_callback(
+                    (
+                        f"Processing term {current_term}/{total_queries}: "
+                        f"{query.term} [lang={query.language or 'default'}, regions={','.join(query.regions) or 'auto'}] "
+                        f"({articles_fetched} articles found)"
+                    ),
+                    False,
+                    False,
+                    False,
+                )
+                self.progress_callback(current_term, total_queries)
+
+                # Pass single expanded query to scraper
                 term_articles = await self.scraper.fetch_articles(
-                    [term],
-                    {term: search_term_map.get(term)},
+                    [{
+                        "term": query.term,
+                        "root_term": query.root_term,
+                        "language": query.language,
+                        "regions": query.regions,
+                    }],
+                    {query.root_term: search_term_map.get(query.root_term)},
                     date_params=date_params,
                 )
                 
                 # Check for rate limit after each term
                 if self.scraper.rate_limited:
-                    logger.warning(f"Rate limit reached after processing {current_term}/{total_terms} terms")
+                    logger.warning(f"Rate limit reached after processing {current_term}/{total_queries} terms")
                     self.status_callback(f"Rate limit reached after finding {articles_fetched} articles. Moving to cleaning phase...", False, True, False)
                     break
                     
                 if term_articles:
                     articles_fetched += len(term_articles)  # Update counter
                     all_articles.extend(term_articles)
-                    logger.info(f"Found {len(term_articles)} articles for term '{term}' (Total: {articles_fetched})")
+                    logger.info(
+                        "Found %s articles for query '%s' (root '%s', lang=%s, regions=%s) total=%s",
+                        len(term_articles),
+                        query.term,
+                        query.root_term,
+                        query.language,
+                        query.regions,
+                        articles_fetched,
+                    )
 
             # Final status update
             articles_found = len(all_articles)
             self.status_callback(
-                f"Completed fetch: {articles_found} articles from {terms_processed}/{total_terms} terms", 
+                f"Completed fetch: {articles_found} articles from {terms_processed}/{total_queries} terms",
                 False, False, True
             )
             return all_articles if articles_found > 0 else []
