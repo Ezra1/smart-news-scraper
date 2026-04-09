@@ -2,6 +2,7 @@ import aiohttp
 import asyncio
 import json
 import re
+from time import perf_counter
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -22,7 +23,8 @@ from src.utils.article_normalization import (
 from src.utils.rate_limiter import RateLimiter
 
 CLIENT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
-MAX_ARTICLE_PAGES = 5
+MAX_ARTICLE_PAGES = 10
+RATE_LIMIT_WINDOW_SECONDS = 60
 HTTP_UNAUTHORIZED = 401
 HTTP_PAYMENT_REQUIRED = 402
 HTTP_FORBIDDEN = 403
@@ -57,13 +59,26 @@ class NewsArticleScraper:
 
         requests_per_second = config_manager.get("NEWS_API_REQUESTS_PER_SECOND", 1)
         self.rate_limiter = RateLimiter(requests_per_second=requests_per_second)
+        self.max_requests_per_second = float(config_manager.get("NEWS_API_MAX_REQUESTS_PER_SECOND", 10) or 10)
+        self.min_requests_per_second = float(config_manager.get("NEWS_API_MIN_REQUESTS_PER_SECOND", 0.2) or 0.2)
+        self.rate_limit_headroom = float(config_manager.get("NEWS_API_RATE_LIMIT_HEADROOM", 0.90) or 0.90)
+        self._resume_requests_at = 0.0
         self.articles_count = int(self.config.get("NEWS_API_PAGE_LIMIT", 50))
         self.max_pages_per_query = int(self.config.get("FETCH_MAX_PAGES_PER_QUERY", MAX_ARTICLE_PAGES))
         self.min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 600))
         self.enable_url_fallback = bool(self.config.get("NEWS_API_ENABLE_URL_FALLBACK", True))
+        self.url_fallback_timeout_seconds = int(self.config.get("NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS", 15))
+        self.url_fallback_max_concurrency = int(self.config.get("NEWS_API_URL_FALLBACK_MAX_CONCURRENCY", 8))
+        self.url_fallback_semaphore = (
+            asyncio.Semaphore(self.url_fallback_max_concurrency)
+            if self.url_fallback_max_concurrency > 0
+            else None
+        )
+        self.raw_insert_batch_size = int(self.config.get("RAW_ARTICLE_INSERT_BATCH_SIZE", 100))
         self.language = str(self.config.get("NEWS_API_LANGUAGE", "en") or "").strip()
         self.source_allowlist = self._parse_csv_list(self.config.get("NEWS_SOURCE_ALLOWLIST", ""))
         self.source_blocklist = self._parse_csv_list(self.config.get("NEWS_SOURCE_BLOCKLIST", ""))
+        self._run_metrics: Dict[str, float] = {}
         logger.info(
             "Initialized TheNewsAPI scraper | api_url=%s lang=%s limit=%s",
             self.api_url,
@@ -139,6 +154,14 @@ class NewsArticleScraper:
 
         all_articles = []
         self.rate_limited = False
+        self._run_metrics = {
+            "raw_fetched_count": 0,
+            "enriched_count": 0,
+            "persisted_count": 0,
+            "fallback_attempt_count": 0,
+            "fallback_seconds": 0.0,
+            "db_persist_seconds": 0.0,
+        }
 
         for term_entry in search_terms:
             query_spec = self._normalize_query_spec(term_entry)
@@ -151,23 +174,30 @@ class NewsArticleScraper:
                 raw_articles = await self._fetch_for_term(term, date_params, query_spec=query_spec)
                 if self.rate_limited:
                     break
+                self._run_metrics["raw_fetched_count"] += len(raw_articles)
 
                 mention_map: Dict[str, Dict[str, str]] = {}
+                enriched_candidates: List[Dict[str, Any]] = []
                 for raw in raw_articles:
                     article_data = await self._enrich_article_data(
                         raw_article=raw,
                         search_term_id=search_term_map.get(root_term),
                         mention_map=mention_map,
                         preserve_existing_mention_values=True,
+                        query_term=term,
+                        query_language=query_spec.get("language", ""),
+                        root_term=root_term,
                     )
                     if not article_data:
                         continue
+                    self._run_metrics["enriched_count"] += 1
                     title = article_data.get("title", "")
                     content = article_data.get("content", "")
                     article_data["incident_level"] = is_incident_article(f"{title} {content}")[0]
+                    enriched_candidates.append(article_data)
 
-                    if self._persist_article(article_data):
-                        all_articles.append(article_data)
+                persisted = self._persist_articles_batch(enriched_candidates)
+                all_articles.extend(persisted)
 
                 logger.info(
                     "Processed %s TheNewsAPI articles for term='%s' (root='%s', lang='%s', regions=%s)",
@@ -179,6 +209,7 @@ class NewsArticleScraper:
                 )
             except Exception as e:
                 logger.error("Error processing articles for term '%s': %s", term, e)
+        self._log_ingestion_run_summary()
         return all_articles
 
     def _normalize_query_spec(self, term_entry: Any) -> Optional[Dict[str, Any]]:
@@ -314,6 +345,7 @@ class NewsArticleScraper:
         try:
             async with aiohttp.ClientSession(timeout=CLIENT_TIMEOUT, trust_env=True) as session:
                 async with session.get(self.api_url, params=payload) as response:
+                    self._adapt_rate_limit_from_headers(response.headers)
                     if response.status == 200:
                         data = await response.json()
                         api_error = self._extract_api_error_message(data)
@@ -326,6 +358,7 @@ class NewsArticleScraper:
                             return []
                         return self._extract_articles_from_response(data)
                     if response.status in (HTTP_PAYMENT_REQUIRED, HTTP_TOO_MANY_REQUESTS):
+                        self._set_resume_from_headers(response.headers)
                         logger.warning("Rate limit/plan limit exceeded for TheNewsAPI")
                         self.rate_limited = True
                         return []
@@ -411,9 +444,23 @@ class NewsArticleScraper:
             article_data["body_source"] = "thenewsapi"
             return
 
-        fallback_text, status = await fetch_readable_text(
-            article_data.get("url", ""),
-            min_length=self.min_body_length,
+        self._run_metrics["fallback_attempt_count"] = self._run_metrics.get("fallback_attempt_count", 0) + 1
+        fallback_start = perf_counter()
+        if self.url_fallback_semaphore is not None:
+            async with self.url_fallback_semaphore:
+                fallback_text, status = await fetch_readable_text(
+                    article_data.get("url", ""),
+                    timeout_seconds=self.url_fallback_timeout_seconds,
+                    min_length=self.min_body_length,
+                )
+        else:
+            fallback_text, status = await fetch_readable_text(
+                article_data.get("url", ""),
+                timeout_seconds=self.url_fallback_timeout_seconds,
+                min_length=self.min_body_length,
+            )
+        self._run_metrics["fallback_seconds"] = self._run_metrics.get("fallback_seconds", 0.0) + (
+            perf_counter() - fallback_start
         )
         article_data["url_fallback_status"] = status
         if fallback_text and len(fallback_text) > len(content):
@@ -429,6 +476,9 @@ class NewsArticleScraper:
         search_term_id: Optional[int],
         mention_map: Dict[str, Dict[str, str]],
         preserve_existing_mention_values: bool,
+        query_term: str = "",
+        query_language: str = "",
+        root_term: str = "",
     ) -> Optional[Dict[str, Any]]:
         """Normalize and enrich a raw article payload for downstream processing."""
         if not isinstance(raw_article, dict):
@@ -444,6 +494,9 @@ class NewsArticleScraper:
             return None
 
         article_data["search_term_id"] = search_term_id
+        article_data["query_term"] = str(query_term or "").strip()
+        article_data["query_language"] = str(query_language or "").strip().lower()
+        article_data["root_term"] = str(root_term or "").strip()
         article_url = article_data.get("url", "")
         mention_meta = mention_map.get(article_url, {}) if isinstance(mention_map, dict) else {}
         event_type_uri = mention_meta.get("event_type_uri", "")
@@ -469,14 +522,61 @@ class NewsArticleScraper:
             return False
 
         try:
+            persist_start = perf_counter()
             article_id = self.article_manager.insert_article(article_data)
+            self._run_metrics["db_persist_seconds"] = self._run_metrics.get("db_persist_seconds", 0.0) + (
+                perf_counter() - persist_start
+            )
             if not article_id:
                 return False
             article_data["id"] = article_id
+            self._run_metrics["persisted_count"] = self._run_metrics.get("persisted_count", 0) + 1
             return True
         except Exception as e:
             logger.error("Failed to persist article '%s': %s", article_data.get("url", ""), e)
             return False
+
+    def _persist_articles_batch(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Persist articles in conservative batches and return successful rows."""
+        if not isinstance(articles, list):
+            logger.error("_persist_articles_batch expected list, got %s", type(articles).__name__)
+            return []
+        if not articles:
+            return []
+
+        batch_size = max(1, int(self.raw_insert_batch_size or 100))
+        persisted: List[Dict[str, Any]] = []
+        for idx in range(0, len(articles), batch_size):
+            batch = articles[idx: idx + batch_size]
+            persist_start = perf_counter()
+            inserted_ids = self.article_manager.insert_articles_batch(batch)
+            self._run_metrics["db_persist_seconds"] = self._run_metrics.get("db_persist_seconds", 0.0) + (
+                perf_counter() - persist_start
+            )
+            for article, article_id in zip(batch, inserted_ids):
+                if not article_id:
+                    continue
+                article["id"] = article_id
+                self._run_metrics["persisted_count"] = self._run_metrics.get("persisted_count", 0) + 1
+                persisted.append(article)
+        return persisted
+
+    def _log_ingestion_run_summary(self) -> None:
+        """Emit one summary line for ingestion performance observability."""
+        if not isinstance(self._run_metrics, dict):
+            return
+        logger.info(
+            (
+                "Ingestion summary | raw_fetched=%s enriched=%s persisted=%s "
+                "fallback_attempts=%s fallback_seconds=%.2f db_persist_seconds=%.2f"
+            ),
+            int(self._run_metrics.get("raw_fetched_count", 0)),
+            int(self._run_metrics.get("enriched_count", 0)),
+            int(self._run_metrics.get("persisted_count", 0)),
+            int(self._run_metrics.get("fallback_attempt_count", 0)),
+            float(self._run_metrics.get("fallback_seconds", 0.0)),
+            float(self._run_metrics.get("db_persist_seconds", 0.0)),
+        )
 
     def _normalize_article(self, article: Dict[str, Any]) -> Dict[str, Any]:
         title = article.get("title") or article.get("articleTitle") or ""
@@ -523,10 +623,71 @@ class NewsArticleScraper:
 
     async def _wait_for_rate_limit(self):
         try:
+            now = asyncio.get_running_loop().time()
+            if self._resume_requests_at > now:
+                await asyncio.sleep(self._resume_requests_at - now)
             await self.rate_limiter.wait_if_needed_async()
         except Exception as e:
             logger.error("Rate limiter wait failed: %s", e)
             raise
+
+    @staticmethod
+    def _parse_int_header(headers: Any, key: str) -> Optional[int]:
+        if not headers:
+            return None
+        value = headers.get(key)
+        if value is None:
+            return None
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _target_rps_from_limit(cls, limit_per_window: int, headroom: float) -> Optional[float]:
+        if limit_per_window <= 0:
+            return None
+        if headroom <= 0:
+            return None
+        return (limit_per_window / RATE_LIMIT_WINDOW_SECONDS) * headroom
+
+    def _adapt_rate_limit_from_headers(self, headers: Any) -> None:
+        limit = self._parse_int_header(headers, "X-RateLimit-Limit")
+        remaining = self._parse_int_header(headers, "X-RateLimit-Remaining")
+        reset_seconds = self._parse_int_header(headers, "X-RateLimit-Reset")
+
+        target_rps = None
+        if limit is not None:
+            target_rps = self._target_rps_from_limit(limit, self.rate_limit_headroom)
+        if remaining is not None and reset_seconds is not None and reset_seconds > 0:
+            remaining_rps = remaining / reset_seconds
+            if target_rps is None:
+                target_rps = remaining_rps
+            else:
+                target_rps = min(target_rps, remaining_rps)
+
+        if target_rps is None:
+            return
+
+        bounded_rps = max(self.min_requests_per_second, min(self.max_requests_per_second, target_rps))
+        self.rate_limiter.requests_per_second = bounded_rps
+
+    def _set_resume_from_headers(self, headers: Any) -> None:
+        if not headers:
+            return
+
+        retry_after = self._parse_int_header(headers, "Retry-After")
+        if retry_after is not None and retry_after > 0:
+            wait_seconds = retry_after
+        else:
+            reset_seconds = self._parse_int_header(headers, "X-RateLimit-Reset")
+            if reset_seconds is None or reset_seconds <= 0:
+                wait_seconds = 1
+            else:
+                wait_seconds = reset_seconds
+
+        now = asyncio.get_running_loop().time()
+        self._resume_requests_at = max(self._resume_requests_at, now + wait_seconds)
 
     async def fetch_all_articles(
         self,
@@ -561,6 +722,9 @@ class NewsArticleScraper:
                         search_term_id=term.get("id"),
                         mention_map=mention_map,
                         preserve_existing_mention_values=False,
+                        query_term=term.get("term", ""),
+                        query_language=term.get("language", ""),
+                        root_term=term.get("root_term", term.get("term", "")),
                     )
                     if not normalized:
                         continue

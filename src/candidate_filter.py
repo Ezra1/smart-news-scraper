@@ -21,7 +21,7 @@ from src.utils.article_normalization import (
 logger = setup_logging(__name__)
 
 
-WORD_PATTERN = re.compile(r"[a-z0-9][a-z0-9\-]{1,}", re.IGNORECASE)
+WORD_PATTERN = re.compile(r"[^\W_]+", re.UNICODE)
 
 
 class SemanticScorer(Protocol):
@@ -166,7 +166,9 @@ class CandidateFilter:
         query_tokens = self._query_tokens(article, query_terms_by_id)
         article_tokens = self._tokens(f"{title} {content}")
         token_overlap = len(query_tokens & article_tokens) if query_tokens else 0
-        if query_tokens and token_overlap < self.min_query_token_overlap:
+        # Fail open when tokenization yields no article tokens. This avoids
+        # language bias for scripts where lexical overlap can be unreliable.
+        if query_tokens and article_tokens and token_overlap < self.min_query_token_overlap:
             return False, "no_overlap", {"overlap": token_overlap, "domain": domain}
 
         is_incident, has_enforcement, has_pharma = is_incident_article(f"{title} {content}")
@@ -256,15 +258,22 @@ class CandidateFilter:
             )
 
     def _query_tokens(self, article: Dict[str, Any], query_terms_by_id: Dict[int, str]) -> set:
-        term_id = article.get("search_term_id")
-        query_term = query_terms_by_id.get(term_id, "")
+        query_term = str(article.get("query_term", "") or "").strip()
+        if not query_term:
+            term_id = article.get("search_term_id")
+            query_term = query_terms_by_id.get(term_id, "")
         if not query_term:
             query_term = " ".join(query_terms_by_id.values())
         return self._tokens(query_term)
 
     @staticmethod
     def _tokens(text: str) -> set:
-        return {m.group(0).lower() for m in WORD_PATTERN.finditer(text or "")}
+        tokens = []
+        for match in WORD_PATTERN.finditer(text or ""):
+            token = match.group(0).strip().lower()
+            if token:
+                tokens.append(token)
+        return set(tokens)
 
     @staticmethod
     def _normalize_text(text: str) -> str:

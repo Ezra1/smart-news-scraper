@@ -111,3 +111,26 @@ def test_candidate_filter_enforces_top_k_per_term():
 
     assert len(filtered) == 1
     assert stats["dropped_by_reason"]["top_k_trim"] == 1
+
+
+def test_candidate_filter_uses_query_term_for_multilingual_overlap():
+    manager = RecordingArticleManager()
+    filterer = CandidateFilter(MockConfig(), db_manager=DummyDBManager(), article_manager=manager)
+    articles = [
+        {
+            **_make_article(
+                10,
+                "La policia incauta medicamentos falsificados",
+                "Autoridades incautaron medicamentos falsificados en una redada local.",
+                "https://example.com/es-1",
+            ),
+            "query_term": "medicamentos falsificados",
+            "query_language": "es",
+        }
+    ]
+    filtered, stats = filterer.filter_candidates(articles, query_terms_by_id={1: "counterfeit medicine"})
+
+    assert len(filtered) == 1
+    assert stats["sent_to_llm_count"] == 1
+    assert manager.records[0]["decision"] == "keep"
+    assert filtered[0]["prellm_query_token_overlap"] >= 1

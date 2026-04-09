@@ -68,6 +68,9 @@ DEFAULT_CONFIG = {
     "NEWS_SOURCE_BLOCKLIST": "",
     "NEWS_API_MIN_BODY_LENGTH": 600,
     "NEWS_API_ENABLE_URL_FALLBACK": True,
+    "NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS": 15,
+    "NEWS_API_URL_FALLBACK_MAX_CONCURRENCY": 8,
+    "RAW_ARTICLE_INSERT_BATCH_SIZE": 100,
     "PRELLM_ENABLE_FILTERING": True,
     "PRELLM_MIN_CONTENT_CHARS": 120,
     "PRELLM_MAX_CONTENT_CHARS": 20000,
@@ -275,6 +278,9 @@ class ConfigManager:
             "NEWS_API_PAGE_LIMIT": int,
             "FETCH_MAX_PAGES_PER_QUERY": int,
             "NEWS_API_MIN_BODY_LENGTH": int,
+            "NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS": int,
+            "NEWS_API_URL_FALLBACK_MAX_CONCURRENCY": int,
+            "RAW_ARTICLE_INSERT_BATCH_SIZE": int,
             "PRELLM_MIN_CONTENT_CHARS": int,
             "PRELLM_MAX_CONTENT_CHARS": int,
             "PRELLM_MIN_QUERY_TOKEN_OVERLAP": int,
@@ -489,6 +495,18 @@ class ConfigManager:
             news_min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 0))
             if news_min_body_length < 0:
                 logger.error("NEWS_API_MIN_BODY_LENGTH must be >= 0")
+                return False
+
+            if int(self.config.get("NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS", 0)) <= 0:
+                logger.error("NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS must be positive")
+                return False
+
+            if int(self.config.get("NEWS_API_URL_FALLBACK_MAX_CONCURRENCY", 0)) < 0:
+                logger.error("NEWS_API_URL_FALLBACK_MAX_CONCURRENCY must be >= 0")
+                return False
+
+            if int(self.config.get("RAW_ARTICLE_INSERT_BATCH_SIZE", 0)) <= 0:
+                logger.error("RAW_ARTICLE_INSERT_BATCH_SIZE must be positive")
                 return False
 
             if int(self.config.get("PRELLM_MIN_CONTENT_CHARS", 0)) < 0:

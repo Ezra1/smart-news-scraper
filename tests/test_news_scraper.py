@@ -11,6 +11,9 @@ class MockConfig:
             "NEWS_API_KEY": "api-key",
             "NEWS_API_BASE_URL": "https://api.thenewsapi.com/v1/news",
             "NEWS_API_REQUESTS_PER_SECOND": 1,
+            "NEWS_API_MAX_REQUESTS_PER_SECOND": 10,
+            "NEWS_API_MIN_REQUESTS_PER_SECOND": 0.2,
+            "NEWS_API_RATE_LIMIT_HEADROOM": 0.9,
             "NEWS_API_PAGE_LIMIT": 50,
             "NEWS_API_LANGUAGE": "en",
             "NEWS_API_MIN_BODY_LENGTH": 600,
@@ -20,10 +23,11 @@ class MockConfig:
 
 
 class FakeResponse:
-    def __init__(self, status, json_data=None, text_data=""):
+    def __init__(self, status, json_data=None, text_data="", headers=None):
         self.status = status
         self._json = json_data or {}
         self._text = text_data
+        self.headers = headers or {}
 
     async def json(self):
         return self._json
@@ -69,7 +73,7 @@ def test_make_api_request_success(monkeypatch, scraper):
 
 
 def test_make_api_request_rate_limit(monkeypatch, scraper):
-    response = FakeResponse(429)
+    response = FakeResponse(429, headers={"Retry-After": "2"})
 
     def client_session(*args, **kwargs):
         return FakeSession(response)
@@ -79,6 +83,28 @@ def test_make_api_request_rate_limit(monkeypatch, scraper):
     articles = asyncio.run(scraper._make_api_request({}))
     assert articles == []
     assert scraper.rate_limited
+
+
+def test_make_api_request_adapts_rps_from_rate_limit_headers(monkeypatch, scraper):
+    response = FakeResponse(
+        200,
+        {"data": [{"title": "A"}]},
+        headers={
+            "X-RateLimit-Limit": "120",
+            "X-RateLimit-Remaining": "30",
+            "X-RateLimit-Reset": "30",
+        },
+    )
+
+    def client_session(*args, **kwargs):
+        return FakeSession(response)
+
+    monkeypatch.setattr("aiohttp.ClientSession", client_session)
+
+    articles = asyncio.run(scraper._make_api_request({}))
+    assert articles == [{"title": "A"}]
+    # 120/min with 90% headroom -> 1.8 RPS, bounded by config.
+    assert scraper.rate_limiter.requests_per_second == pytest.approx(1.0)
 
 
 def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):

@@ -387,19 +387,9 @@ class ArticleManager:
                 logger.error(f"Missing required fields in article data: {data}")
                 return None
                 
-            # Check if article already exists by URL
-            existing = self.db_manager.execute_query(
-                "SELECT id FROM raw_articles WHERE url = ?",
-                (data['url'],)
-            )
-            
-            if existing:
-                logger.debug(f"Article already exists with URL: {data['url']}")
-                return existing[0]['id']
-            
-            # Insert new article
-            query = """
-                INSERT INTO raw_articles 
+            # Conflict-safe single query insert path; avoids pre-check round trip.
+            insert_query = """
+                INSERT OR IGNORE INTO raw_articles
                 (title, content, source, url, url_to_image, published_at, search_term_id,
                  event_uri, concepts, categories, location, extracted_dates, incident_sentence,
                  event_type_uri, source_rank_percentile, full_text, body_source, url_fallback_status)
@@ -414,19 +404,153 @@ class ArticleManager:
                 data['source_rank_percentile'], data['full_text'],
                 data['body_source'], data['url_fallback_status'],
             )
-            
-            result = self.db_manager.execute_query(query, values)
-            if result and hasattr(result, 'lastrowid'):
-                article_id = result.lastrowid
-                logger.info(f"Successfully inserted article '{data['title']}' with ID {article_id}")
-                return article_id
-            else:
-                logger.error("Failed to get lastrowid from insert operation")
+            result = self.db_manager.execute_query(insert_query, values)
+            if result is None:
+                logger.error("Insert operation did not return a cursor for url=%s", data['url'])
                 return None
+
+            if getattr(result, "rowcount", 0) == 1:
+                article_id = getattr(result, "lastrowid", None)
+                if article_id:
+                    logger.debug("Inserted raw article id=%s url=%s", article_id, data['url'])
+                    return article_id
+
+            existing = self.db_manager.execute_query(
+                "SELECT id FROM raw_articles WHERE url = ?",
+                (data['url'],)
+            )
+            if existing:
+                return existing[0]['id']
+            logger.error("Failed to resolve article id after insert/ignore for url=%s", data['url'])
+            return None
                 
         except Exception as e:
             logger.error(f"Error inserting article '{article_data.get('title', 'Unknown')}': {e}")
             return None
+
+    def insert_articles_batch(self, articles: List[Dict[str, Any]]) -> List[Optional[int]]:
+        """Insert a batch of raw articles in one transaction with rollback on DB error."""
+        if not isinstance(articles, list):
+            logger.error("insert_articles_batch expected list, got %s", type(articles).__name__)
+            return []
+        if not articles:
+            return []
+
+        inserted_ids: List[Optional[int]] = [None] * len(articles)
+        inserted_count = 0
+        duplicate_count = 0
+
+        insert_query = """
+            INSERT OR IGNORE INTO raw_articles
+            (title, content, source, url, url_to_image, published_at, search_term_id,
+             event_uri, concepts, categories, location, extracted_dates, incident_sentence,
+             event_type_uri, source_rank_percentile, full_text, body_source, url_fallback_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        try:
+            with self.db_manager.get_connection() as conn:
+                cur = conn.cursor()
+                try:
+                    for idx, article_data in enumerate(articles):
+                        normalized = self._normalize_article_for_insert(article_data, search_term_id=None)
+                        if not normalized:
+                            continue
+                        values = self._raw_insert_values(normalized)
+                        cur.execute(insert_query, values)
+                        insert_rowcount = cur.rowcount
+                        cur.execute("SELECT id FROM raw_articles WHERE url = ?", (normalized["url"],))
+                        row = cur.fetchone()
+                        if row is None:
+                            continue
+                        inserted_ids[idx] = row[0]
+                        if insert_rowcount == 1:
+                            inserted_count += 1
+                        else:
+                            duplicate_count += 1
+                    conn.commit()
+                except sqlite3.Error as e:
+                    conn.rollback()
+                    logger.error("Batch insert failed; rolled back %s records: %s", len(articles), e)
+                    return [None] * len(articles)
+
+            logger.info(
+                "Raw batch insert complete | attempted=%s inserted=%s duplicates=%s",
+                len(articles),
+                inserted_count,
+                duplicate_count,
+            )
+            return inserted_ids
+        except Exception as e:
+            logger.error("insert_articles_batch failed: %s", e)
+            return [None] * len(articles)
+
+    def _normalize_article_for_insert(
+        self,
+        article_data: Dict[str, Any],
+        search_term_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Normalize one raw article payload for insert routines."""
+        if not isinstance(article_data, dict):
+            logger.error("_normalize_article_for_insert expected dict, got %s", type(article_data).__name__)
+            return None
+
+        data = {
+            'title': article_data.get('title', ''),
+            'content': (
+                article_data.get('content', '')
+                or article_data.get('description', '')
+                or article_data.get('snippet', '')
+            ),
+            'url': article_data.get('url', ''),
+            'search_term_id': search_term_id or article_data.get('search_term_id'),
+            'published_at': (
+                article_data.get('published_at', '')
+                or article_data.get('publishedAt', '')
+                or article_data.get('published_on', '')
+            ),
+            'url_to_image': (
+                article_data.get('url_to_image', '')
+                or article_data.get('image_url', '')
+                or article_data.get('urlToImage', '')
+            ),
+            'event_uri': article_data.get('event_uri', ''),
+            'concepts': article_data.get('concepts', ''),
+            'categories': article_data.get('categories', ''),
+            'location': article_data.get('location', ''),
+            'extracted_dates': article_data.get('extracted_dates', ''),
+            'incident_sentence': article_data.get('incident_sentence', ''),
+            'event_type_uri': article_data.get('event_type_uri', ''),
+            'source_rank_percentile': article_data.get('source_rank_percentile'),
+            'full_text': article_data.get('full_text', ''),
+            'body_source': article_data.get('body_source', ''),
+            'url_fallback_status': article_data.get('url_fallback_status', ''),
+        }
+
+        source = article_data.get('source', '') or article_data.get('source_name', '')
+        data['source'] = extract_source_name(source)
+
+        for key in ['concepts', 'categories', 'location', 'extracted_dates']:
+            if isinstance(data[key], (dict, list)):
+                data[key] = json.dumps(data[key], ensure_ascii=False)
+
+        if not all(data[key] for key in ['title', 'content', 'url']):
+            logger.error("Missing required fields in article data for url=%s", data.get("url", ""))
+            return None
+        return data
+
+    @staticmethod
+    def _raw_insert_values(data: Dict[str, Any]) -> tuple:
+        """Return ordered values tuple for raw_articles insert statements."""
+        return (
+            data['title'], data['content'], data['source'],
+            data['url'], data['url_to_image'], data['published_at'],
+            data['search_term_id'], data['event_uri'], data['concepts'],
+            data['categories'], data['location'], data['extracted_dates'],
+            data['incident_sentence'], data['event_type_uri'],
+            data['source_rank_percentile'], data['full_text'],
+            data['body_source'], data['url_fallback_status'],
+        )
 
     def get_articles(self, article_id: Optional[int] = None) -> Optional[Dict]:
         """Retrieve articles with proper error handling"""

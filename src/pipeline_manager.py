@@ -1,4 +1,5 @@
 from typing import List, Callable, Optional
+import time
 from src.news_scraper import NewsArticleScraper
 from src.candidate_filter import CandidateFilter
 from src.openai_relevance_processing import ArticleProcessor
@@ -320,6 +321,7 @@ class PipelineManager:
             self.status_callback("Cleaning articles...", False, False, False)
             cleaned = []
             total = len(articles)
+            slow_clean_threshold_seconds = 2.0
             
             for i, article in enumerate(articles, 1):
                 if self.cancelled:
@@ -331,9 +333,20 @@ class PipelineManager:
                 if article_id is None:
                     logger.warning(f"Missing ID for article: {article.get('url', 'No URL')}")
 
+                started = time.monotonic()
                 if clean_article := self.validator.clean_article(article):
                     clean_article['id'] = article_id  # Preserve the ID
                     cleaned.append(clean_article)
+                elapsed = time.monotonic() - started
+                if elapsed >= slow_clean_threshold_seconds:
+                    logger.warning(
+                        "Slow cleaning for article %s/%s | id=%s url=%s elapsed=%.2fs",
+                        i,
+                        total,
+                        article_id,
+                        article.get("url", ""),
+                        elapsed,
+                    )
 
                 # Report progress for cleaning phase
                 self.progress_callback(i, total)

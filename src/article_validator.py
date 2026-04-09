@@ -1,11 +1,10 @@
 import re
-import html
 import bleach
 from dateutil import parser
 from datetime import datetime, timezone
-from typing import Dict, Optional, Set
-from bs4 import BeautifulSoup, Comment
-from urllib.parse import urlparse, urljoin
+from typing import Dict, Optional
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 from src.logger_config import setup_logging
 logger = setup_logging(__name__)
@@ -14,6 +13,8 @@ class ArticleValidator:
     # Tight HTML whitelist and length limits to reduce XSS/oversize payloads
     MAX_TITLE_LENGTH = 500
     MAX_CONTENT_LENGTH = 100_000
+    MAX_RAW_TITLE_LENGTH = 4_000
+    MAX_RAW_CONTENT_LENGTH = 120_000
 
     def __init__(self):
         # Define allowed HTML elements with specific attributes (no images/links/classes)
@@ -44,6 +45,11 @@ class ArticleValidator:
         """
         if not text:
             return ""
+        if not isinstance(text, str):
+            text = str(text)
+        # Fast path: plain text does not need HTML parser passes.
+        if "<" not in text and ">" not in text:
+            return " ".join(text.split())
             
         try:
             # Create custom cleaner with simplified settings
@@ -74,6 +80,17 @@ class ArticleValidator:
         except Exception as e:
             logger.error(f"Text cleaning failed: {e}")
             return ""
+
+    @staticmethod
+    def _cap_raw_text(value: object, max_length: int) -> str:
+        if value is None:
+            return ""
+        text = value if isinstance(value, str) else str(value)
+        if max_length <= 0:
+            return ""
+        if len(text) <= max_length:
+            return text
+        return text[:max_length]
 
     def validate_url(self, url: str) -> bool:
         """
@@ -168,21 +185,33 @@ class ArticleValidator:
         Returns:
             Optional[Dict]: Cleaned article data or None if validation fails
         """
+        if not isinstance(article, dict):
+            logger.error("clean_article expected dict, got %s", type(article).__name__)
+            return None
+
         try:
             # Validate required fields
             required_fields = {'title', 'content', 'url'}
             if not all(field in article for field in required_fields):
                 logger.error(f"Missing required fields: {required_fields - set(article.keys())}")
                 return None
-                
+
+            # Validate URL early to avoid expensive cleaning work on dropped rows.
+            url = article.get("url", "")
+            if not self.validate_url(url):
+                logger.error(f"Invalid URL: {url}")
+                return None
+
             # Clean and validate individual fields
-            title = self.clean_text(article.get('title', ''))
-            content = self.clean_text(article.get('content', ''))
+            raw_title = self._cap_raw_text(article.get("title", ""), self.MAX_RAW_TITLE_LENGTH)
+            raw_content = self._cap_raw_text(article.get("content", ""), self.MAX_RAW_CONTENT_LENGTH)
+
+            title = self.clean_text(raw_title)
+            content = self.clean_text(raw_content)
             if len(title) > self.MAX_TITLE_LENGTH:
                 title = title[:self.MAX_TITLE_LENGTH]
             if len(content) > self.MAX_CONTENT_LENGTH:
                 content = content[:self.MAX_CONTENT_LENGTH]
-            url = article.get('url', '')
             published_at = article.get('published_at', '')
             url_to_image = article.get('url_to_image', '')
             if url_to_image and not self.validate_url(url_to_image):
@@ -191,10 +220,6 @@ class ArticleValidator:
             # Validate required fields
             if not all([title, content, url]):
                 logger.error("Required fields empty after cleaning")
-                return None
-                
-            if not self.validate_url(url):
-                logger.error(f"Invalid URL: {url}")
                 return None
                 
             # Validate and parse date
@@ -210,6 +235,9 @@ class ArticleValidator:
                 "description",
                 "snippet",
                 "search_term_id",
+                "query_term",
+                "query_language",
+                "root_term",
                 "incident_level",
                 "event_uri",
                 "concepts",

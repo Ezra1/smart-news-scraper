@@ -73,6 +73,25 @@ def test_invalid_url_rejected(validator):
     assert result is None
 
 
+def test_invalid_url_returns_before_expensive_cleaning(monkeypatch, validator):
+    calls = {"count": 0}
+
+    def fake_clean_text(_value):
+        calls["count"] += 1
+        return "should-not-run"
+
+    monkeypatch.setattr(validator, "clean_text", fake_clean_text)
+    article = {
+        "url": "https://stallman.org/archives/2026-jan-apr.html#9_March_2026_(High_immigrant_application_fees,_UK)",
+        "title": "Some title",
+        "content": "Very long content " * 10000,
+    }
+
+    result = validator.clean_article(article)
+    assert result is None
+    assert calls["count"] == 0
+
+
 def test_script_tags_stripped(validator):
     article = {
         "url": "https://example.com",
@@ -176,4 +195,28 @@ def test_malformed_date_rejected(validator):
     }
     result = validator.clean_article(article)
     assert result is None
+
+
+def test_clean_article_caps_raw_text_before_cleaning(monkeypatch, validator):
+    seen_lengths = []
+
+    def fake_clean_text(value):
+        text = value if isinstance(value, str) else str(value)
+        seen_lengths.append(len(text))
+        return text
+
+    monkeypatch.setattr(validator, "clean_text", fake_clean_text)
+    article = {
+        "url": "https://example.com",
+        "title": "t" * (validator.MAX_RAW_TITLE_LENGTH + 500),
+        "content": "c" * (validator.MAX_RAW_CONTENT_LENGTH + 5000),
+        "source_name": "source",
+    }
+
+    result = validator.clean_article(article)
+
+    assert result is not None
+    # First call is title, second call is content.
+    assert seen_lengths[0] == validator.MAX_RAW_TITLE_LENGTH
+    assert seen_lengths[1] == validator.MAX_RAW_CONTENT_LENGTH
 

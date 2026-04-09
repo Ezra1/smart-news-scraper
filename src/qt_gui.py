@@ -20,11 +20,12 @@ from PyQt6.QtWidgets import (
     QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit,
     QRadioButton, QDateEdit, QButtonGroup, QCheckBox
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate, QObject
 from PyQt6.QtGui import QFont, QIcon, QAction
 from pathlib import Path
 from datetime import datetime, timedelta
 import asyncio
+import logging
 import re
 import sys
 from queue import Queue
@@ -72,6 +73,26 @@ SUPPORTED_REGIONS = [
     ("tw", "Taiwan"),
     ("in", "India"),
 ]
+
+class GuiLogBridge(QObject):
+    """Qt signal bridge for forwarding logging lines to the UI thread."""
+    log_message = pyqtSignal(str)
+
+
+class GuiLogHandler(logging.Handler):
+    """Logging handler that emits formatted records over a Qt signal."""
+
+    def __init__(self, bridge: GuiLogBridge):
+        super().__init__()
+        self.bridge = bridge
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = self.format(record)
+            self.bridge.log_message.emit(message)
+        except Exception:
+            self.handleError(record)
+
 
 class ApiValidationWorker(QThread):
     finished = pyqtSignal(tuple)  # (news_valid, openai_valid, error_message)
@@ -348,6 +369,11 @@ class NewsScraperGUI(QMainWindow):
         self.pipeline = PipelineManager(self.db_manager, self.config_manager)
         self.status_parser = StatusParser()
         self.state = ProcessingState()
+        self.run_log_max_lines = 2000
+        self._gui_log_bridge = GuiLogBridge()
+        self._gui_log_bridge.log_message.connect(self._append_run_log_line)
+        self._gui_log_handler = None
+        self._gui_log_targets = []
         
         # Defer processor initialization until needed
         self.processor = None
@@ -632,7 +658,7 @@ class NewsScraperGUI(QMainWindow):
         self.news_api_key.setText(self.config_manager.get("NEWS_API_KEY", ""))
         self.news_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         news_api_layout.addWidget(self.news_api_key)
-        toggle_news = QPushButton("👁️")
+        toggle_news = QPushButton("Show")
         toggle_news.clicked.connect(lambda: self._toggle_password_visibility(self.news_api_key))
         news_api_layout.addWidget(toggle_news)
         api_layout.addLayout(news_api_layout)
@@ -644,7 +670,7 @@ class NewsScraperGUI(QMainWindow):
         self.openai_api_key.setText(self.config_manager.get("OPENAI_API_KEY", ""))
         self.openai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         openai_api_layout.addWidget(self.openai_api_key)
-        toggle_openai = QPushButton("👁️")
+        toggle_openai = QPushButton("Show")
         toggle_openai.clicked.connect(lambda: self._toggle_password_visibility(self.openai_api_key))
         openai_api_layout.addWidget(toggle_openai)
         api_layout.addLayout(openai_api_layout)
@@ -853,13 +879,13 @@ class NewsScraperGUI(QMainWindow):
 
         # Buttons
         btn_layout = QHBoxLayout()
-        add_btn = QPushButton("➕ Add Term")
+        add_btn = QPushButton("Add Term")
         add_btn.clicked.connect(self._add_search_term)
-        remove_btn = QPushButton("➖ Remove Selected")
+        remove_btn = QPushButton("Remove Selected")
         remove_btn.clicked.connect(self._remove_search_term)
-        import_btn = QPushButton("📥 Import from File")
+        import_btn = QPushButton("Import from File")
         import_btn.clicked.connect(self._import_search_terms)
-        export_btn = QPushButton("📤 Export to File")
+        export_btn = QPushButton("Export to File")
         export_btn.clicked.connect(self._export_search_terms)
 
         btn_layout.addWidget(add_btn)
@@ -886,7 +912,7 @@ class NewsScraperGUI(QMainWindow):
 
         # Overall status
         status_box = QHBoxLayout()
-        self.status_icon = QLabel("🟢")
+        self.status_icon = QLabel("OK")
         self.status_label = QLabel("Ready to process articles")
         status_box.addWidget(self.status_icon)
         status_box.addWidget(self.status_label)
@@ -897,7 +923,7 @@ class NewsScraperGUI(QMainWindow):
         phase_layout = QGridLayout(phase_group)
         
         # Fetch phase
-        self.fetch_icon = QLabel("⭕")
+        self.fetch_icon = QLabel("o")
         self.fetch_status = QLabel("Fetching: Waiting")
         self.fetch_progress = QProgressBar()
         self.fetch_progress.setMaximum(100)
@@ -906,7 +932,7 @@ class NewsScraperGUI(QMainWindow):
         phase_layout.addWidget(self.fetch_progress, 0, 2)
         
         # Clean phase
-        self.clean_icon = QLabel("⭕")
+        self.clean_icon = QLabel("o")
         self.clean_status = QLabel("Cleaning: Waiting")
         self.clean_progress = QProgressBar()
         self.clean_progress.setMaximum(100)
@@ -915,7 +941,7 @@ class NewsScraperGUI(QMainWindow):
         phase_layout.addWidget(self.clean_progress, 1, 2)
         
         # Analyze phase
-        self.analyze_icon = QLabel("⭕")
+        self.analyze_icon = QLabel("o")
         self.analyze_status = QLabel("Analysis: Waiting")
         self.analyze_progress = QProgressBar()
         self.analyze_progress.setMaximum(100)
@@ -937,33 +963,29 @@ class NewsScraperGUI(QMainWindow):
 
         # Control buttons
         btn_layout = QHBoxLayout()
-        self.start_btn = QPushButton("▶️ Start Processing")
+        self.start_btn = QPushButton("Start Processing")
         self.start_btn.clicked.connect(self._start_processing)
         
-        self.stop_btn = QPushButton("⏹️ Stop Processing")
+        self.stop_btn = QPushButton("Stop Processing")
         self.stop_btn.clicked.connect(self._stop_processing)
         self.stop_btn.setEnabled(False)
+        self.clear_logs_btn = QPushButton("Clear Logs")
+        self.clear_logs_btn.clicked.connect(self._clear_run_logs)
 
         btn_layout.addWidget(self.start_btn)
         btn_layout.addWidget(self.stop_btn)
+        btn_layout.addWidget(self.clear_logs_btn)
         left_panel.addLayout(btn_layout)
 
-        # Step controls
-        steps_group = QGroupBox("Processing Steps")
-        steps_layout = QHBoxLayout(steps_group)
-
-        fetch_btn = QPushButton("1. Fetch Articles")
-        fetch_btn.setEnabled(False)
-        clean_btn = QPushButton("2. Clean Articles")
-        clean_btn.setEnabled(False)
-        analyze_btn = QPushButton("3. Analyze Relevance")
-        analyze_btn.setEnabled(False)
-
-        steps_layout.addWidget(fetch_btn)
-        steps_layout.addWidget(clean_btn)
-        steps_layout.addWidget(analyze_btn)
-
-        left_panel.addWidget(steps_group)
+        # Live run logs
+        logs_group = QGroupBox("Run Logs")
+        logs_layout = QVBoxLayout(logs_group)
+        self.run_logs_output = QTextEdit()
+        self.run_logs_output.setReadOnly(True)
+        self.run_logs_output.setPlaceholderText("Run logs will appear here while processing is active.")
+        self.run_logs_output.setMinimumHeight(170)
+        logs_layout.addWidget(self.run_logs_output)
+        left_panel.addWidget(logs_group)
 
         # Right side: Database Preview
         right_panel = QVBoxLayout()
@@ -1143,7 +1165,7 @@ class NewsScraperGUI(QMainWindow):
         self.all_results = []
 
         # Export button
-        export_btn = QPushButton("📤 Export Results")
+        export_btn = QPushButton("Export Results")
         export_btn.clicked.connect(self._export_results)
         layout.addWidget(export_btn)
 
@@ -1272,8 +1294,10 @@ class NewsScraperGUI(QMainWindow):
             self._reset_phase_statuses()
             self.progress_bar.setValue(0)
             self.progress_counter.setText("0/0 articles processed")
-            self.status_icon.setText("🔄")
+            self.status_icon.setText("...")
             self.status_label.setText("Starting processing...")
+            self._clear_run_logs()
+            self._attach_run_log_handler()
 
             # Ensure pipeline has current config
             self.pipeline = PipelineManager(self.db_manager, self.config_manager)
@@ -1292,6 +1316,7 @@ class NewsScraperGUI(QMainWindow):
             self.worker.start()
             
         except Exception as e:
+            self._detach_run_log_handler()
             QMessageBox.critical(self, "Error", f"Failed to start processing: {e}")
             logger.error(f"Processing start error: {e}")
             return
@@ -1334,6 +1359,7 @@ class NewsScraperGUI(QMainWindow):
             QMessageBox.warning(self, "Warning", "No articles were processed")
             logger.warning("No articles were processed")
             self._update_previews()
+        self._detach_run_log_handler()
 
     def _stop_processing(self):
         if self.worker:
@@ -1346,9 +1372,10 @@ class NewsScraperGUI(QMainWindow):
         self._processing = False
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.status_icon.setText("⏹️")
+        self.status_icon.setText("[]")
         self.status_label.setText("Processing stopped by user")
         self._reset_phase_statuses()
+        self._detach_run_log_handler()
 
     def _update_progress(self, current, total):
         if total > 0:
@@ -1419,15 +1446,15 @@ class NewsScraperGUI(QMainWindow):
 
         if status.is_error:
             logger.error(f"Process error: {status.message}")
-            self.status_icon.setText("❌")
+            self.status_icon.setText("X")
         elif status.is_warning:
             logger.warning(f"Process warning: {status.message}")
-            self.status_icon.setText("⚠️")
+            self.status_icon.setText("!")
         elif status.is_success:
             logger.info(f"Process success: {status.message}")
-            self.status_icon.setText("✅")
+            self.status_icon.setText("V")
         else:
-            self.status_icon.setText("🔄")
+            self.status_icon.setText("...")
 
     def _update_phase_status(self, phase, status, progress=0, is_error=False, is_complete=False):
         """Update icons, labels, and progress bars for a processing phase.
@@ -1458,11 +1485,11 @@ class NewsScraperGUI(QMainWindow):
         if phase in icon_map:
             # Update icon
             if is_error:
-                icon_map[phase].setText("❌")
+                icon_map[phase].setText("X")
             elif is_complete:
-                icon_map[phase].setText("✅")
+                icon_map[phase].setText("V")
             else:
-                icon_map[phase].setText("🔄")
+                icon_map[phase].setText("...")
 
             # Update status text and progress
             if phase == 'fetch' and not is_complete and not is_error:
@@ -1492,7 +1519,7 @@ class NewsScraperGUI(QMainWindow):
                 'clean': self.clean_icon,
                 'analyze': self.analyze_icon
             }
-            icon_map[phase].setText("⭕")
+            icon_map[phase].setText("o")
 
     def _update_raw_count(self):
         """Update the raw articles count from database"""
@@ -1502,6 +1529,64 @@ class NewsScraperGUI(QMainWindow):
     def _update_fetched_count(self, count: int):
         """Update the fetched this run counter"""
         self.fetched_count_label.setText(str(count))
+
+    def _attach_run_log_handler(self):
+        """Attach a GUI logging handler to active project loggers."""
+        if self._gui_log_handler is not None:
+            return
+
+        handler = GuiLogHandler(self._gui_log_bridge)
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        )
+
+        targets = []
+        for logger_obj in logging.Logger.manager.loggerDict.values():
+            if isinstance(logger_obj, logging.Logger) and logger_obj.handlers:
+                logger_obj.addHandler(handler)
+                targets.append(logger_obj)
+
+        if not targets:
+            root_logger = logging.getLogger()
+            root_logger.addHandler(handler)
+            targets.append(root_logger)
+
+        self._gui_log_handler = handler
+        self._gui_log_targets = targets
+
+    def _detach_run_log_handler(self):
+        """Detach GUI logging handler to avoid duplicate log fanout."""
+        if self._gui_log_handler is None:
+            return
+        for logger_obj in self._gui_log_targets:
+            try:
+                logger_obj.removeHandler(self._gui_log_handler)
+            except Exception:
+                pass
+        self._gui_log_targets = []
+        self._gui_log_handler = None
+
+    def _clear_run_logs(self):
+        if hasattr(self, "run_logs_output") and self.run_logs_output is not None:
+            self.run_logs_output.clear()
+
+    def _append_run_log_line(self, message: str):
+        """Append one log line and cap retained lines for UI responsiveness."""
+        if not message or not hasattr(self, "run_logs_output") or self.run_logs_output is None:
+            return
+        self.run_logs_output.append(message)
+        doc = self.run_logs_output.document()
+        overflow = doc.blockCount() - self.run_log_max_lines
+        if overflow <= 0:
+            return
+
+        cursor = self.run_logs_output.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Start)
+        for _ in range(overflow):
+            cursor.select(cursor.SelectionType.BlockUnderCursor)
+            cursor.removeSelectedText()
+            cursor.deleteChar()
 
     def _show_context_menu(self, position):
         item = self.results_tree.itemAt(position)
@@ -1776,4 +1861,5 @@ class NewsScraperGUI(QMainWindow):
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
+        self._detach_run_log_handler()
         event.accept()
