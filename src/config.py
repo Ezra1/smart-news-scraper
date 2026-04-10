@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
     "NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS": 15,
     "NEWS_API_URL_FALLBACK_MAX_CONCURRENCY": 8,
     "RAW_ARTICLE_INSERT_BATCH_SIZE": 100,
-    "PRELLM_ENABLE_FILTERING": True,
+    "PRELLM_ENABLE_FILTERING": False,
     "PRELLM_MIN_CONTENT_CHARS": 120,
     "PRELLM_MAX_CONTENT_CHARS": 20000,
     "PRELLM_MIN_QUERY_TOKEN_OVERLAP": 1,
@@ -91,6 +91,7 @@ DEFAULT_CONFIG = {
     "QUERY_EXPANSION_VARIANTS_PER_TERM": 3,
     "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 120,
     "QUERY_EXPANSION_LANGUAGES": "en,es,fr,pt,ar,ru,zh,hi",
+    "HIGH_RECALL_MODE": True,
     "REQUEST_BUDGET_MODE": "aggressive",
     "REQUEST_BUDGET_PER_RUN": 200,
     "DATE_RANGE_MODE": "preset",
@@ -107,6 +108,9 @@ DEFAULT_CONFIG = {
 EXPECTED_API_URL = "https://api.thenewsapi.com/v1/news"
 EXPECTED_DB_PATH = "data/news_articles.db"
 EXPECTED_THRESHOLD = 0.7
+
+# One-shot migration: older installs saved HIGH_RECALL_MODE=false when the default was off.
+_HIGH_RECALL_DEFAULT_ON_MIGRATION_ID = "high_recall_mode_default_on_2026_04"
 
 
 def _first_non_null(config: Dict[str, Any], *keys: str) -> Any:
@@ -297,6 +301,7 @@ class ConfigManager:
             "PRELLM_ENABLE_LLM_GUARDRAIL",
             "QUERY_EXPANSION_ENABLED",
             "QUERY_EXPANSION_USE_AI",
+            "HIGH_RECALL_MODE",
         }
         
         env_config = {}
@@ -337,10 +342,38 @@ class ConfigManager:
             if key not in config:
                 config[key] = value
 
+        self._apply_high_recall_default_migration(config)
+
         # Warn if user config diverges from the template defaults
         self._warn_if_diverged(config)
 
         return config
+
+    def _apply_high_recall_default_migration(self, config: Dict[str, Any]) -> None:
+        """Ensure HIGH_RECALL_MODE matches the new default (on) for configs that predate it."""
+        raw = config.get("_APPLIED_CONFIG_MIGRATIONS")
+        if not isinstance(raw, list):
+            applied: List[Any] = []
+        else:
+            applied = list(raw)
+        if _HIGH_RECALL_DEFAULT_ON_MIGRATION_ID in applied:
+            return
+        config["HIGH_RECALL_MODE"] = True
+        applied.append(_HIGH_RECALL_DEFAULT_ON_MIGRATION_ID)
+        config["_APPLIED_CONFIG_MIGRATIONS"] = applied
+        try:
+            self.save_config(config)
+        except Exception as exc:
+            logger.warning(
+                "Could not persist config after migration %s (using in-memory values): %s",
+                _HIGH_RECALL_DEFAULT_ON_MIGRATION_ID,
+                exc,
+            )
+        else:
+            logger.info(
+                "Applied config migration %s: HIGH_RECALL_MODE is now on by default.",
+                _HIGH_RECALL_DEFAULT_ON_MIGRATION_ID,
+            )
 
     def _load_template_defaults(self) -> Dict[str, Any]:
         """Load template values for comparison; safe no-op if missing/invalid."""
@@ -379,7 +412,7 @@ class ConfigManager:
         if self._is_simplified_template(template):
             return
 
-        ignore_keys = {"NEWS_API_KEY", "OPENAI_API_KEY"}
+        ignore_keys = {"NEWS_API_KEY", "OPENAI_API_KEY", "_APPLIED_CONFIG_MIGRATIONS"}
         diffs = []
 
         for key, template_value in template.items():

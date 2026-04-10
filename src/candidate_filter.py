@@ -69,7 +69,7 @@ class CandidateFilter:
         self.article_manager = article_manager or ArticleManager(self.db_manager)
         self.semantic_scorer = semantic_scorer or NoOpSemanticScorer()
 
-        self.enable_filtering = bool(self.config.get("PRELLM_ENABLE_FILTERING", True))
+        self.enable_filtering = bool(self.config.get("PRELLM_ENABLE_FILTERING", False))
         self.min_content_chars = int(self.config.get("PRELLM_MIN_CONTENT_CHARS", 120))
         self.max_content_chars = int(self.config.get("PRELLM_MAX_CONTENT_CHARS", 20000))
         self.min_query_token_overlap = int(self.config.get("PRELLM_MIN_QUERY_TOKEN_OVERLAP", 1))

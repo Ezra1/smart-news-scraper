@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QTreeWidget, QTreeWidgetItem, QMessageBox, QFileDialog,
     QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit,
     QRadioButton, QDateEdit, QButtonGroup, QCheckBox, QSpinBox, QToolButton, QStyle,
-    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate, QObject, QSize
 from PyQt6.QtGui import QFont, QIcon, QAction
@@ -39,13 +39,14 @@ from src.pipeline_manager import PipelineManager
 from src.pipeline_factory import create_pipeline
 from src.api_validator import validate_news_api_key, validate_openai_api_key
 from src.openai_client import get_client
+from src.gui.flow_layout import FlowLayout
 from src.gui.status_parser import StatusParser, StatusUpdate
 from src.gui.processing_state import ProcessingState
 from src.utils.article_normalization import extract_source_name
 
 logger = setup_logging(__name__)
 
-# Codes align with TheNewsAPI supported languages (including `multi`).
+# Codes align with TheNewsAPI supported languages.
 SUPPORTED_LANGUAGES = [
     ("ar", "Arabic"),
     ("bg", "Bulgarian"),
@@ -69,7 +70,6 @@ SUPPORTED_LANGUAGES = [
     ("ja", "Japanese"),
     ("ko", "Korean"),
     ("lt", "Lithuanian"),
-    ("multi", "Multilingual"),
     ("nl", "Dutch"),
     ("no", "Norwegian"),
     ("pl", "Polish"),
@@ -85,6 +85,18 @@ SUPPORTED_LANGUAGES = [
     ("vi", "Vietnamese"),
     ("zh", "Chinese"),
 ]
+
+
+class LanguageChipButton(QPushButton):
+    """Checkable pill-style control for selecting a query expansion language."""
+
+    def __init__(self, label: str, parent: QWidget | None = None):
+        super().__init__(label, parent)
+        self.setCheckable(True)
+        self.setObjectName("language_chip")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+
 
 # Results table: field key, header label, default width (API-aligned export uses same keys).
 RESULTS_TABLE_COLUMNS = [
@@ -552,6 +564,32 @@ class NewsScraperGUI(QMainWindow):
                 background-color: #444444;
                 color: #888888;
             }}
+
+            QPushButton#language_chip {{
+                min-width: 0;
+                min-height: 0;
+                padding: 4px 12px;
+                border-radius: 12px;
+                border: 1px solid {colors['border']};
+                background-color: {colors['bg_light']};
+                color: {colors['text']};
+                font-weight: 400;
+            }}
+            QPushButton#language_chip:hover {{
+                background-color: {colors['secondary']};
+                border-color: {colors['accent']};
+            }}
+            QPushButton#language_chip:checked {{
+                background-color: {colors['accent']};
+                color: {colors['text']};
+                border-color: {colors['secondary']};
+            }}
+            QPushButton#language_chip:checked:hover {{
+                background-color: {colors['secondary']};
+            }}
+            QPushButton#language_chip:pressed {{
+                background-color: {colors['primary']};
+            }}
             
             QLineEdit {{
                 padding: 8px;
@@ -759,25 +797,31 @@ class NewsScraperGUI(QMainWindow):
         multilingual_group = QGroupBox("High-Recall Multilingual Search")
         multilingual_layout = QVBoxLayout(multilingual_group)
         self.high_recall_enabled = QCheckBox("Enable high-recall mode (balanced quality, higher volume)")
-        self.high_recall_enabled.setChecked(bool(self.config_manager.get("HIGH_RECALL_MODE", False)))
-        multilingual_layout.addWidget(self.high_recall_enabled)
+        self.high_recall_enabled.setChecked(bool(self.config_manager.get("HIGH_RECALL_MODE", True)))
+        multilingual_layout.addWidget(
+            self._create_checkbox_with_help(
+                self.high_recall_enabled,
+                "Uses multilingual query expansion (see languages below) so more articles are retrieved "
+                "across selected languages before filtering and AI relevance scoring. Expect higher volume "
+                "than a default run; downstream filters and your relevance threshold still apply.",
+            )
+        )
 
         multilingual_layout.addWidget(QLabel("Languages (primary control):"))
         self.language_checkboxes = {}
-        language_row = QHBoxLayout()
-        language_row.setSpacing(8)
+        language_chips_host = QWidget()
+        language_flow = FlowLayout(language_chips_host, margin=0, h_spacing=8, v_spacing=6)
         selected_languages = {
             part.strip().lower()
             for part in str(self.config_manager.get("QUERY_EXPANSION_LANGUAGES", "en")).split(",")
             if part.strip()
         }
         for code, label in SUPPORTED_LANGUAGES:
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(code in selected_languages or (not selected_languages and code == "en"))
-            self.language_checkboxes[code] = checkbox
-            language_row.addWidget(checkbox)
-        language_row.addStretch()
-        multilingual_layout.addLayout(language_row)
+            chip = LanguageChipButton(label)
+            chip.setChecked(code in selected_languages or (not selected_languages and code == "en"))
+            self.language_checkboxes[code] = chip
+            language_flow.addWidget(chip)
+        multilingual_layout.addWidget(language_chips_host)
 
         layout.addWidget(multilingual_group)
 
@@ -821,13 +865,14 @@ class NewsScraperGUI(QMainWindow):
         layout.addWidget(title)
         info = QLabel(
             "Use simple filtering strength presets; the same rules apply to every search topic.\n"
+            "Turn pre-LLM filtering on or off from the Processing tab (saved when you toggle it).\n"
             "Note: non-English articles skip this before-AI filtering stage."
         )
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        preset_group = QGroupBox("Overall Filtering Strength")
-        preset_layout = QHBoxLayout(preset_group)
+        self.filter_preset_group = QGroupBox("Overall Filtering Strength")
+        preset_layout = QHBoxLayout(self.filter_preset_group)
         preset_layout.addWidget(
             self._create_help_label(
                 "Preset:",
@@ -845,10 +890,10 @@ class NewsScraperGUI(QMainWindow):
         self.filter_preset_combo.currentIndexChanged.connect(self._on_filter_preset_changed)
         preset_layout.addWidget(self.filter_preset_combo)
         preset_layout.addStretch()
-        layout.addWidget(preset_group)
+        layout.addWidget(self.filter_preset_group)
 
-        global_group = QGroupBox("Global Filter Settings")
-        global_layout = QGridLayout(global_group)
+        self.filter_global_group = QGroupBox("Global Filter Settings")
+        global_layout = QGridLayout(self.filter_global_group)
         self.filter_min_chars_spin = QSpinBox()
         self.filter_min_chars_spin.setRange(0, 200000)
         self.filter_min_chars_spin.setValue(int(self.config_manager.get("PRELLM_MIN_CONTENT_CHARS", 120)))
@@ -913,10 +958,10 @@ class NewsScraperGUI(QMainWindow):
             ),
             5, 0, 1, 2
         )
-        layout.addWidget(global_group)
+        layout.addWidget(self.filter_global_group)
 
-        topic_words_group = QGroupBox("Per-Topic Filter Words")
-        topic_words_layout = QVBoxLayout(topic_words_group)
+        self.filter_topic_words_group = QGroupBox("Per-Topic Filter Words")
+        topic_words_layout = QVBoxLayout(self.filter_topic_words_group)
         topic_words_layout.addWidget(
             QLabel("Edit the words used to check topic overlap for each topic.")
         )
@@ -940,7 +985,7 @@ class NewsScraperGUI(QMainWindow):
         topic_words_buttons.addWidget(remove_word_btn)
         topic_words_buttons.addStretch()
         topic_words_layout.addLayout(topic_words_buttons)
-        layout.addWidget(topic_words_group)
+        layout.addWidget(self.filter_topic_words_group)
 
         insights_group = QGroupBox("Filtering Insights (recent decisions)")
         insights_layout = QVBoxLayout(insights_group)
@@ -971,6 +1016,28 @@ class NewsScraperGUI(QMainWindow):
         filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         filter_scroll.setWidget(filter_content)
         self.tabs.addTab(filter_scroll, "Filtering Controls")
+
+        self._apply_prellm_filtering_controls_enabled(
+            bool(self.config_manager.get("PRELLM_ENABLE_FILTERING", False))
+        )
+
+    def _apply_prellm_filtering_controls_enabled(self, enabled: bool):
+        """Disable preset, global, and per-topic controls when pre-LLM filtering is off."""
+        if not hasattr(self, "filter_preset_group"):
+            return
+        self.filter_preset_group.setEnabled(enabled)
+        self.filter_global_group.setEnabled(enabled)
+        self.filter_topic_words_group.setEnabled(enabled)
+
+    def _on_processing_prellm_filtering_toggled(self, checked: bool):
+        """Keep in-memory config, Filtering tab state, and config.json aligned with the Processing tab switch."""
+        enabled = bool(checked)
+        self.config_manager.config["PRELLM_ENABLE_FILTERING"] = enabled
+        self._apply_prellm_filtering_controls_enabled(enabled)
+        try:
+            self.config_manager.save_config(self.config_manager.config)
+        except Exception as exc:
+            logger.warning("Could not persist PRELLM_ENABLE_FILTERING: %s", exc)
 
     def _create_help_label(self, text: str, tooltip: str) -> QWidget:
         """Create a label with a compact hover-help icon."""
@@ -1185,6 +1252,11 @@ class NewsScraperGUI(QMainWindow):
             QMessageBox.warning(self, "Invalid Filtering Range", "Minimum content length cannot exceed maximum.")
             return
         updates = {
+            "PRELLM_ENABLE_FILTERING": (
+                bool(self.processing_enable_prellm.isChecked())
+                if hasattr(self, "processing_enable_prellm")
+                else bool(self.config_manager.get("PRELLM_ENABLE_FILTERING", False))
+            ),
             "PRELLM_FILTER_PRESET": self.filter_preset_combo.currentData(),
             "PRELLM_MIN_CONTENT_CHARS": min_chars,
             "PRELLM_MAX_CONTENT_CHARS": max_chars,
@@ -1457,6 +1529,25 @@ class NewsScraperGUI(QMainWindow):
 
         left_panel.addWidget(status_group)
 
+        prellm_options = QGroupBox("Pre-LLM filtering")
+        prellm_options_layout = QVBoxLayout(prellm_options)
+        self.processing_enable_prellm = QCheckBox(
+            "Enable pre-LLM filtering (heuristic filters and dedup before AI relevance scoring)"
+        )
+        self.processing_enable_prellm.setToolTip(
+            "When off, fetched articles are not filtered by length, keyword overlap, or dedup rules "
+            "before relevance scoring; all candidates go to the LLM stage. "
+            "This setting is saved to your config when toggled."
+        )
+        self.processing_enable_prellm.blockSignals(True)
+        self.processing_enable_prellm.setChecked(
+            bool(self.config_manager.get("PRELLM_ENABLE_FILTERING", False))
+        )
+        self.processing_enable_prellm.blockSignals(False)
+        self.processing_enable_prellm.toggled.connect(self._on_processing_prellm_filtering_toggled)
+        prellm_options_layout.addWidget(self.processing_enable_prellm)
+        left_panel.addWidget(prellm_options)
+
         # Control buttons
         btn_layout = QHBoxLayout()
         self.start_btn = QPushButton("Start Processing")
@@ -1569,7 +1660,9 @@ class NewsScraperGUI(QMainWindow):
         layout.addLayout(panels_layout)
 
         self.tabs.addTab(process_widget, "Processing")
-        
+
+        self._apply_prellm_filtering_controls_enabled(self.processing_enable_prellm.isChecked())
+
         # Initial preview update
         self._update_previews()
 
@@ -1774,6 +1867,10 @@ class NewsScraperGUI(QMainWindow):
                 self.tabs.setCurrentIndex(0)
                 return
             date_params = self.date_range_widget.get_date_params()
+
+            self.config_manager.config["PRELLM_ENABLE_FILTERING"] = bool(
+                self.processing_enable_prellm.isChecked()
+            )
 
             # Reset fetched counter when starting new run
             self._update_fetched_count(0)

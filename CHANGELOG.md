@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-04-10
+### Added
+- Configuration tab: language selection as wrapping chip buttons (`FlowLayout`) instead of a single row of checkboxes.
+- Processing tab: **Pre-LLM filtering** master switch (saved when toggled and applied on each run); Filtering tab documents that the switch lives there.
+- High-recall mode: tooltip on the checkbox; `HIGH_RECALL_MODE` default **on** in defaults/template with a one-time config migration for legacy `false` saves.
+- `src/gui/flow_layout.py`: reusable wrapping layout for chip rows.
+
+### Changed
+- `PRELLM_ENABLE_FILTERING` default **off**; heuristic pre-LLM filtering is controlled from Processing, not Filtering.
+- `HIGH_RECALL_MODE` added to `DEFAULT_CONFIG`, template, and env `bool_keys`.
+
+### Removed
+- **Multilingual** (`multi`) language chip (TheNewsAPI `multi` code) from the GUI language list.
+
 ## [2.1.0] - 2026-04-10
 ### Added
 - GUI multilingual picker aligned with TheNewsAPI supported language codes (including `multi`).
