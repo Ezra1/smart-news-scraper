@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QTabWidget, QLineEdit, QFrame, QListWidget, QProgressBar,
     QScrollArea, QTreeWidget, QTreeWidgetItem, QMessageBox, QFileDialog,
     QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit,
-    QRadioButton, QDateEdit, QButtonGroup, QCheckBox
+    QRadioButton, QDateEdit, QButtonGroup, QCheckBox, QSpinBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate, QObject
 from PyQt6.QtGui import QFont, QIcon, QAction
@@ -73,6 +73,36 @@ SUPPORTED_REGIONS = [
     ("tw", "Taiwan"),
     ("in", "India"),
 ]
+
+FILTER_PRESET_MAP = {
+    "more_permissive": {
+        "min_content_chars": 40,
+        "max_content_chars": 40000,
+        "min_query_token_overlap": 0,
+        "require_incident_signal": False,
+        "dedup_by_url": True,
+        "dedup_by_title": True,
+        "top_k_per_term": 200,
+    },
+    "medium": {
+        "min_content_chars": 120,
+        "max_content_chars": 20000,
+        "min_query_token_overlap": 1,
+        "require_incident_signal": False,
+        "dedup_by_url": True,
+        "dedup_by_title": True,
+        "top_k_per_term": 100,
+    },
+    "most_aggressive": {
+        "min_content_chars": 250,
+        "max_content_chars": 12000,
+        "min_query_token_overlap": 2,
+        "require_incident_signal": True,
+        "dedup_by_url": True,
+        "dedup_by_title": True,
+        "top_k_per_term": 50,
+    },
+}
 
 class GuiLogBridge(QObject):
     """Qt signal bridge for forwarding logging lines to the UI thread."""
@@ -377,6 +407,7 @@ class NewsScraperGUI(QMainWindow):
         
         # Defer processor initialization until needed
         self.processor = None
+        self.results_exported_this_session = False
 
         # Setup UI
         self._setup_ui()
@@ -411,6 +442,7 @@ class NewsScraperGUI(QMainWindow):
 
         # Add tabs
         self._create_config_tab()
+        self._create_filtering_controls_tab()
         self._create_search_terms_tab()
         self._create_processing_tab()
         self._create_results_tab()
@@ -771,6 +803,244 @@ class NewsScraperGUI(QMainWindow):
 
         layout.addStretch()
         self.tabs.addTab(config_widget, "Configuration")
+
+    def _create_filtering_controls_tab(self):
+        filter_widget = QWidget()
+        layout = QVBoxLayout(filter_widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("Pre-LLM Filtering Controls")
+        title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        layout.addWidget(title)
+        info = QLabel(
+            "Use simple filtering strength presets, then optionally customize by topic.\n"
+            "Note: non-English articles skip this pre-LLM filtering stage."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        preset_group = QGroupBox("Overall Filtering Strength")
+        preset_layout = QHBoxLayout(preset_group)
+        preset_layout.addWidget(QLabel("Preset:"))
+        self.filter_preset_combo = QComboBox()
+        self.filter_preset_combo.addItem("More Permissive (recommended)", "more_permissive")
+        self.filter_preset_combo.addItem("Medium", "medium")
+        self.filter_preset_combo.addItem("Most Aggressive", "most_aggressive")
+        saved_preset = str(self.config_manager.get("PRELLM_FILTER_PRESET", "more_permissive")).strip().lower()
+        preset_index = max(0, self.filter_preset_combo.findData(saved_preset))
+        self.filter_preset_combo.setCurrentIndex(preset_index)
+        self.filter_preset_combo.currentIndexChanged.connect(self._on_filter_preset_changed)
+        preset_layout.addWidget(self.filter_preset_combo)
+        preset_layout.addStretch()
+        layout.addWidget(preset_group)
+
+        global_group = QGroupBox("Global Rule Details")
+        global_layout = QGridLayout(global_group)
+        self.filter_min_chars_spin = QSpinBox()
+        self.filter_min_chars_spin.setRange(0, 200000)
+        self.filter_min_chars_spin.setValue(int(self.config_manager.get("PRELLM_MIN_CONTENT_CHARS", 120)))
+        self.filter_max_chars_spin = QSpinBox()
+        self.filter_max_chars_spin.setRange(1, 500000)
+        self.filter_max_chars_spin.setValue(int(self.config_manager.get("PRELLM_MAX_CONTENT_CHARS", 20000)))
+        self.filter_min_overlap_spin = QSpinBox()
+        self.filter_min_overlap_spin.setRange(0, 20)
+        self.filter_min_overlap_spin.setValue(int(self.config_manager.get("PRELLM_MIN_QUERY_TOKEN_OVERLAP", 1)))
+        self.filter_top_k_spin = QSpinBox()
+        self.filter_top_k_spin.setRange(0, 10000)
+        self.filter_top_k_spin.setValue(int(self.config_manager.get("PRELLM_TOP_K_PER_TERM", 100)))
+        self.filter_require_incident = QCheckBox("Require clear incident signal")
+        self.filter_require_incident.setChecked(bool(self.config_manager.get("PRELLM_REQUIRE_INCIDENT_SIGNAL", False)))
+        self.filter_dedup_url = QCheckBox("Remove duplicate URLs")
+        self.filter_dedup_url.setChecked(bool(self.config_manager.get("PRELLM_DEDUP_BY_URL", True)))
+        self.filter_dedup_title = QCheckBox("Remove duplicate titles")
+        self.filter_dedup_title.setChecked(bool(self.config_manager.get("PRELLM_DEDUP_BY_TITLE", True)))
+
+        global_layout.addWidget(QLabel("Minimum content length:"), 0, 0)
+        global_layout.addWidget(self.filter_min_chars_spin, 0, 1)
+        global_layout.addWidget(QLabel("Maximum content length:"), 1, 0)
+        global_layout.addWidget(self.filter_max_chars_spin, 1, 1)
+        global_layout.addWidget(QLabel("Minimum topic overlap tokens:"), 2, 0)
+        global_layout.addWidget(self.filter_min_overlap_spin, 2, 1)
+        global_layout.addWidget(QLabel("Max articles kept per topic:"), 3, 0)
+        global_layout.addWidget(self.filter_top_k_spin, 3, 1)
+        global_layout.addWidget(self.filter_require_incident, 4, 0, 1, 2)
+        global_layout.addWidget(self.filter_dedup_url, 5, 0, 1, 2)
+        global_layout.addWidget(self.filter_dedup_title, 6, 0, 1, 2)
+        layout.addWidget(global_group)
+
+        topic_group = QGroupBox("Per-Topic Customization")
+        topic_layout = QGridLayout(topic_group)
+        self.filter_topic_combo = QComboBox()
+        self.filter_topic_combo.currentIndexChanged.connect(self._on_filter_topic_changed)
+        self.filter_topic_enabled = QCheckBox("Use custom filtering for this topic")
+        self.filter_topic_min_overlap_spin = QSpinBox()
+        self.filter_topic_min_overlap_spin.setRange(0, 20)
+        self.filter_topic_top_k_spin = QSpinBox()
+        self.filter_topic_top_k_spin.setRange(0, 10000)
+        self.filter_topic_require_incident = QCheckBox("Require clear incident signal for this topic")
+        self.filter_topic_note = QLabel("Choose a topic from Search Terms to customize.")
+        self.filter_topic_note.setWordWrap(True)
+        topic_layout.addWidget(QLabel("Topic:"), 0, 0)
+        topic_layout.addWidget(self.filter_topic_combo, 0, 1)
+        topic_layout.addWidget(self.filter_topic_enabled, 1, 0, 1, 2)
+        topic_layout.addWidget(QLabel("Min overlap tokens:"), 2, 0)
+        topic_layout.addWidget(self.filter_topic_min_overlap_spin, 2, 1)
+        topic_layout.addWidget(QLabel("Max kept for this topic:"), 3, 0)
+        topic_layout.addWidget(self.filter_topic_top_k_spin, 3, 1)
+        topic_layout.addWidget(self.filter_topic_require_incident, 4, 0, 1, 2)
+        topic_layout.addWidget(self.filter_topic_note, 5, 0, 1, 2)
+        layout.addWidget(topic_group)
+
+        insights_group = QGroupBox("Filtering Insights (latest decisions)")
+        insights_layout = QVBoxLayout(insights_group)
+        self.filter_insights_output = QTextEdit()
+        self.filter_insights_output.setReadOnly(True)
+        self.filter_insights_output.setMinimumHeight(180)
+        insights_layout.addWidget(self.filter_insights_output)
+        layout.addWidget(insights_group)
+
+        button_row = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh Insights")
+        refresh_btn.clicked.connect(self._update_filtering_insights)
+        save_btn = QPushButton("Save Filtering Controls")
+        save_btn.clicked.connect(self._save_filtering_settings)
+        button_row.addWidget(refresh_btn)
+        button_row.addStretch()
+        button_row.addWidget(save_btn)
+        layout.addLayout(button_row)
+        layout.addStretch()
+
+        self._filter_topic_overrides = self.config_manager.get("PRELLM_TOPIC_OVERRIDES", {}) or {}
+        if not isinstance(self._filter_topic_overrides, dict):
+            self._filter_topic_overrides = {}
+        self._current_filter_topic = ""
+        self._refresh_filter_topic_selector()
+        self._update_filtering_insights()
+        self.tabs.addTab(filter_widget, "Filtering Controls")
+
+    def _on_filter_preset_changed(self, _index=None):
+        preset_key = self.filter_preset_combo.currentData()
+        preset_values = FILTER_PRESET_MAP.get(preset_key, FILTER_PRESET_MAP["more_permissive"])
+        self.filter_min_chars_spin.setValue(int(preset_values["min_content_chars"]))
+        self.filter_max_chars_spin.setValue(int(preset_values["max_content_chars"]))
+        self.filter_min_overlap_spin.setValue(int(preset_values["min_query_token_overlap"]))
+        self.filter_top_k_spin.setValue(int(preset_values["top_k_per_term"]))
+        self.filter_require_incident.setChecked(bool(preset_values["require_incident_signal"]))
+        self.filter_dedup_url.setChecked(bool(preset_values["dedup_by_url"]))
+        self.filter_dedup_title.setChecked(bool(preset_values["dedup_by_title"]))
+
+    def _refresh_filter_topic_selector(self):
+        topic_terms = [term["term"] for term in self.search_manager.get_search_terms()]
+        current = self.filter_topic_combo.currentText() if self.filter_topic_combo.count() else ""
+        self.filter_topic_combo.blockSignals(True)
+        self.filter_topic_combo.clear()
+        self.filter_topic_combo.addItems(topic_terms)
+        self.filter_topic_combo.blockSignals(False)
+        if not topic_terms:
+            self._current_filter_topic = ""
+            self.filter_topic_note.setText("No search terms yet. Add terms in the Search Terms tab.")
+            self._load_filter_topic_controls("")
+            return
+        if current in topic_terms:
+            self.filter_topic_combo.setCurrentText(current)
+            self._load_filter_topic_controls(current)
+        else:
+            self.filter_topic_combo.setCurrentIndex(0)
+            self._load_filter_topic_controls(self.filter_topic_combo.currentText())
+
+    def _on_filter_topic_changed(self, _index=None):
+        self._save_current_topic_override()
+        self._load_filter_topic_controls(self.filter_topic_combo.currentText())
+
+    def _load_filter_topic_controls(self, topic: str):
+        self._current_filter_topic = topic
+        if not topic:
+            self.filter_topic_enabled.setChecked(False)
+            self.filter_topic_min_overlap_spin.setValue(int(self.filter_min_overlap_spin.value()))
+            self.filter_topic_top_k_spin.setValue(int(self.filter_top_k_spin.value()))
+            self.filter_topic_require_incident.setChecked(bool(self.filter_require_incident.isChecked()))
+            return
+        override = self._filter_topic_overrides.get(topic, {})
+        if not isinstance(override, dict):
+            override = {}
+        self.filter_topic_enabled.setChecked(bool(override.get("enabled", False)))
+        self.filter_topic_min_overlap_spin.setValue(
+            int(override.get("min_query_token_overlap", self.filter_min_overlap_spin.value()))
+        )
+        self.filter_topic_top_k_spin.setValue(
+            int(override.get("top_k_per_term", self.filter_top_k_spin.value()))
+        )
+        self.filter_topic_require_incident.setChecked(
+            bool(override.get("require_incident_signal", self.filter_require_incident.isChecked()))
+        )
+        self.filter_topic_note.setText(
+            "Non-English articles for this topic still bypass pre-LLM filtering."
+        )
+
+    def _save_current_topic_override(self):
+        topic = self._current_filter_topic
+        if not topic:
+            return
+        if not self.filter_topic_enabled.isChecked():
+            self._filter_topic_overrides.pop(topic, None)
+            return
+        self._filter_topic_overrides[topic] = {
+            "enabled": True,
+            "min_query_token_overlap": int(self.filter_topic_min_overlap_spin.value()),
+            "top_k_per_term": int(self.filter_topic_top_k_spin.value()),
+            "require_incident_signal": bool(self.filter_topic_require_incident.isChecked()),
+        }
+
+    def _save_filtering_settings(self):
+        self._save_current_topic_override()
+        min_chars = int(self.filter_min_chars_spin.value())
+        max_chars = int(self.filter_max_chars_spin.value())
+        if min_chars > max_chars:
+            QMessageBox.warning(self, "Invalid Filtering Range", "Minimum content length cannot exceed maximum.")
+            return
+        updates = {
+            "PRELLM_FILTER_PRESET": self.filter_preset_combo.currentData(),
+            "PRELLM_MIN_CONTENT_CHARS": min_chars,
+            "PRELLM_MAX_CONTENT_CHARS": max_chars,
+            "PRELLM_MIN_QUERY_TOKEN_OVERLAP": int(self.filter_min_overlap_spin.value()),
+            "PRELLM_TOP_K_PER_TERM": int(self.filter_top_k_spin.value()),
+            "PRELLM_REQUIRE_INCIDENT_SIGNAL": bool(self.filter_require_incident.isChecked()),
+            "PRELLM_DEDUP_BY_URL": bool(self.filter_dedup_url.isChecked()),
+            "PRELLM_DEDUP_BY_TITLE": bool(self.filter_dedup_title.isChecked()),
+            "PRELLM_TOPIC_OVERRIDES": self._filter_topic_overrides,
+        }
+        try:
+            self.config_manager.save_config(updates)
+            QMessageBox.information(self, "Saved", "Filtering controls saved successfully.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"Failed to save filtering controls: {exc}")
+
+    def _update_filtering_insights(self):
+        try:
+            rows = self.db_manager.execute_query(
+                """
+                SELECT reason, COUNT(*) AS count
+                FROM pre_llm_filter_results
+                WHERE decision='drop'
+                GROUP BY reason
+                ORDER BY count DESC, reason ASC
+                LIMIT 15
+                """
+            ) or []
+        except Exception as exc:
+            self.filter_insights_output.setPlainText(f"Could not load insights: {exc}")
+            return
+
+        if not rows:
+            self.filter_insights_output.setPlainText(
+                "No drop decisions recorded yet.\nRun processing to see what was filtered and why."
+            )
+            return
+        lines = ["Most common drop reasons:"]
+        for row in rows:
+            lines.append(f"- {row.get('reason', 'unknown')}: {row.get('count', 0)}")
+        self.filter_insights_output.setPlainText("\n".join(lines))
 
     def _save_config(self):
         """Save and validate configuration including API keys."""
@@ -1204,6 +1474,8 @@ class NewsScraperGUI(QMainWindow):
         terms = self.search_manager.get_search_terms()
         for term in terms:
             self.terms_list.addItem(term['term'])
+        if hasattr(self, "filter_topic_combo"):
+            self._refresh_filter_topic_selector()
 
     def _add_search_term(self):
         term, ok = QInputDialog.getText(self, "Add Search Term", "Enter new search term:")
@@ -1285,6 +1557,8 @@ class NewsScraperGUI(QMainWindow):
             if not search_terms:
                 QMessageBox.warning(self, "Warning", "No search terms defined. Please add search terms first.")
                 return
+            if not self._prepare_storage_for_new_run():
+                return
 
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
@@ -1318,6 +1592,7 @@ class NewsScraperGUI(QMainWindow):
         except Exception as e:
             self._detach_run_log_handler()
             QMessageBox.critical(self, "Error", f"Failed to start processing: {e}")
+            logger.exception("Failed to start processing")
             logger.error(f"Processing start error: {e}")
             return
 
@@ -1354,12 +1629,48 @@ class NewsScraperGUI(QMainWindow):
             logger.info(
                 f"Successfully processed {relevant_count} relevant articles."
             )
+            self.results_exported_this_session = False
         else:
             self._reset_phase_statuses()
             QMessageBox.warning(self, "Warning", "No articles were processed")
             logger.warning("No articles were processed")
             self._update_previews()
+        if hasattr(self, "filter_insights_output"):
+            self._update_filtering_insights()
         self._detach_run_log_handler()
+
+    def _prepare_storage_for_new_run(self) -> bool:
+        """Clear raw rows and resolve pre-existing relevant rows safely."""
+        # Raw rows should clear immediately, independent of relevant export choice.
+        self.db_manager.execute_query("DELETE FROM raw_articles")
+        relevant_count = self.db_manager.get_table_row_count("relevant_articles")
+        if relevant_count > 0 and not self.results_exported_this_session:
+            choice_box = QMessageBox(self)
+            choice_box.setIcon(QMessageBox.Icon.Warning)
+            choice_box.setWindowTitle("Unexported Results Detected")
+            choice_box.setText(
+                "Relevant articles already exist and have not been exported this session.\n"
+                "Choose how to proceed before starting a new run."
+            )
+            clear_btn = choice_box.addButton("Clear results", QMessageBox.ButtonRole.AcceptRole)
+            export_clear_btn = choice_box.addButton(
+                "Export and clear results", QMessageBox.ButtonRole.ActionRole
+            )
+            choice_box.exec()
+            selected = choice_box.clickedButton()
+            if selected is None:
+                return False
+
+            if selected == export_clear_btn:
+                if not self._export_results():
+                    return False
+            elif selected != clear_btn:
+                return False
+
+        if relevant_count > 0:
+            self.db_manager.execute_query("DELETE FROM relevant_articles")
+        self._update_previews()
+        return True
 
     def _stop_processing(self):
         if self.worker:
@@ -1643,11 +1954,11 @@ class NewsScraperGUI(QMainWindow):
             if (search_text in title and relevance >= min_relevance):
                 self._add_result_item(result)
 
-    def _export_results(self):
-        """Export the current results to a file"""
+    def _export_results(self) -> bool:
+        """Export the current results to a file."""
         if not self.all_results:
             QMessageBox.warning(self, "Warning", "No results to export")
-            return
+            return False
 
         # Get the current relevance filter setting
         relevance_idx = self.relevance_filter.currentIndex()
@@ -1671,7 +1982,7 @@ class NewsScraperGUI(QMainWindow):
         
         if not filtered_results:
             QMessageBox.warning(self, "Warning", "No results match your current filter criteria")
-            return
+            return False
 
         file_path, file_type = QFileDialog.getSaveFileName(
             self,
@@ -1681,7 +1992,7 @@ class NewsScraperGUI(QMainWindow):
         )
         
         if not file_path:
-            return
+            return False
 
         try:
             # Write results based on file type
@@ -1691,11 +2002,13 @@ class NewsScraperGUI(QMainWindow):
                 self._export_to_json(file_path, filtered_results)
             else:
                 self._export_to_txt(file_path, filtered_results)
-                
+
+            self.results_exported_this_session = True
             QMessageBox.information(self, "Success", f"Results exported to {file_path}")
-            
+            return True
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
+            return False
 
     def _export_to_csv(self, file_path, results):
         """Export results to CSV format"""

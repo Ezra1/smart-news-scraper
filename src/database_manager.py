@@ -151,6 +151,27 @@ class DatabaseManager:
                 logger.error(f"Database query error: {e} | Query: {query}")
                 raise
 
+    def get_table_row_count(self, table_name: str) -> int:
+        """Return row count for a known application table."""
+        allowed_tables = {
+            "search_terms",
+            "raw_articles",
+            "relevant_articles",
+            "processing_results",
+            "pre_llm_filter_results",
+        }
+        if table_name not in allowed_tables:
+            logger.error("Refusing row count for unknown table: %s", table_name)
+            return 0
+        try:
+            rows = self.execute_query(f"SELECT COUNT(*) AS count FROM {table_name}")
+            if not rows:
+                return 0
+            return int(rows[0].get("count", 0) or 0)
+        except Exception as e:
+            logger.error("Failed counting rows for table '%s': %s", table_name, e)
+            return 0
+
     def __del__(self):
         """Ensure connection is closed when object is destroyed"""
         self.close()

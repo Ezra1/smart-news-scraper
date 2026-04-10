@@ -134,3 +134,54 @@ def test_candidate_filter_uses_query_term_for_multilingual_overlap():
     assert stats["sent_to_llm_count"] == 1
     assert manager.records[0]["decision"] == "keep"
     assert filtered[0]["prellm_query_token_overlap"] >= 1
+
+
+def test_candidate_filter_applies_topic_override_for_overlap():
+    manager = RecordingArticleManager()
+    config = MockConfig(
+        {
+            "PRELLM_MIN_QUERY_TOKEN_OVERLAP": 1,
+            "PRELLM_TOPIC_OVERRIDES": {
+                "topic-a": {
+                    "enabled": True,
+                    "min_query_token_overlap": 0,
+                }
+            },
+        }
+    )
+    filterer = CandidateFilter(config, db_manager=DummyDBManager(), article_manager=manager)
+    article = _make_article(
+        20,
+        "Short title",
+        "Different words only",
+        "https://example.com/topic-a",
+    )
+    article["query_term"] = "topic-a"
+    filtered, stats = filterer.filter_candidates([article], query_terms_by_id={1: "doesnotmatch"})
+
+    assert len(filtered) == 1
+    assert stats["sent_to_llm_count"] == 1
+
+
+def test_candidate_filter_applies_topic_override_for_top_k():
+    manager = RecordingArticleManager()
+    config = MockConfig(
+        {
+            "PRELLM_TOP_K_PER_TERM": 5,
+            "PRELLM_TOPIC_OVERRIDES": {
+                "topic-b": {
+                    "enabled": True,
+                    "top_k_per_term": 1,
+                }
+            },
+        }
+    )
+    filterer = CandidateFilter(config, db_manager=DummyDBManager(), article_manager=manager)
+    a1 = _make_article(31, "topic b alpha", "topic b alpha details", "https://example.com/topic-b-1")
+    a2 = _make_article(32, "topic b beta", "topic b beta details", "https://example.com/topic-b-2")
+    a1["query_term"] = "topic-b"
+    a2["query_term"] = "topic-b"
+    filtered, stats = filterer.filter_candidates([a1, a2], query_terms_by_id={1: "topic b"})
+
+    assert len(filtered) == 1
+    assert stats["dropped_by_reason"]["top_k_trim"] == 1

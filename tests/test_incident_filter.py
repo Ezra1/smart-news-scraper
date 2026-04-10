@@ -34,6 +34,18 @@ class TestIncidentFilter:
         assert skip is True
         assert score == 0.3
 
+    def test_non_english_query_language_does_not_skip_llm(self):
+        text = "这篇文章讨论了药品监管和查处行动"
+        skip, score = should_skip_llm("伪劣药品", text, query_language="zh")
+        assert skip is False
+        assert score is None
+
+    def test_non_ascii_dominant_text_does_not_skip_llm(self):
+        text = "药品 伪劣 药物 执法 行动 调查 部门 公告"
+        skip, score = should_skip_llm("伪劣药品", text)
+        assert skip is False
+        assert score is None
+
     def test_weak_enforcement_without_crime_not_incident(self):
         text = "Police discuss pharmaceutical policy trends for 2026"
         is_inc, has_enf, has_ph = is_incident_article(text)

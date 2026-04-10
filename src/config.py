@@ -82,6 +82,8 @@ DEFAULT_CONFIG = {
     "PRELLM_STAGE3_ENABLED": False,
     "PRELLM_LOG_DROPS": True,
     "PRELLM_ENABLE_LLM_GUARDRAIL": True,
+    "PRELLM_FILTER_PRESET": "more_permissive",
+    "PRELLM_TOPIC_OVERRIDES": {},
     "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
     "HIGH_RECALL_MODE": False,
@@ -530,6 +532,39 @@ class ConfigManager:
             if int(self.config.get("PRELLM_TOP_K_PER_TERM", 0)) < 0:
                 logger.error("PRELLM_TOP_K_PER_TERM must be >= 0")
                 return False
+            preset = str(self.config.get("PRELLM_FILTER_PRESET", "more_permissive")).strip().lower()
+            if preset not in {"more_permissive", "medium", "most_aggressive"}:
+                logger.error("PRELLM_FILTER_PRESET must be one of: more_permissive, medium, most_aggressive")
+                return False
+
+            topic_overrides = self.config.get("PRELLM_TOPIC_OVERRIDES", {})
+            if topic_overrides is None:
+                topic_overrides = {}
+            if not isinstance(topic_overrides, dict):
+                logger.error("PRELLM_TOPIC_OVERRIDES must be a dictionary")
+                return False
+            for topic_name, override in topic_overrides.items():
+                if not isinstance(topic_name, str) or not topic_name.strip():
+                    logger.error("PRELLM_TOPIC_OVERRIDES keys must be non-empty strings")
+                    return False
+                if not isinstance(override, dict):
+                    logger.error("Each PRELLM topic override must be a dictionary")
+                    return False
+                min_chars = int(override.get("min_content_chars", self.config.get("PRELLM_MIN_CONTENT_CHARS", 0)))
+                max_chars = int(override.get("max_content_chars", self.config.get("PRELLM_MAX_CONTENT_CHARS", 0)))
+                min_overlap = int(
+                    override.get("min_query_token_overlap", self.config.get("PRELLM_MIN_QUERY_TOKEN_OVERLAP", 0))
+                )
+                top_k = int(override.get("top_k_per_term", self.config.get("PRELLM_TOP_K_PER_TERM", 0)))
+                if min_chars < 0 or max_chars <= 0 or min_chars > max_chars:
+                    logger.error("Invalid min/max content chars in PRELLM topic override for '%s'", topic_name)
+                    return False
+                if min_overlap < 0:
+                    logger.error("min_query_token_overlap must be >= 0 in PRELLM topic override for '%s'", topic_name)
+                    return False
+                if top_k < 0:
+                    logger.error("top_k_per_term must be >= 0 in PRELLM topic override for '%s'", topic_name)
+                    return False
             if int(self.config.get("QUERY_EXPANSION_VARIANTS_PER_TERM", 0)) < 0:
                 logger.error("QUERY_EXPANSION_VARIANTS_PER_TERM must be >= 0")
                 return False

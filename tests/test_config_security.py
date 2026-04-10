@@ -60,3 +60,27 @@ def test_save_config_never_writes_sensitive_keys_to_config_json(tmp_path, monkey
     assert "NEWS_API_KEY" not in content
     assert "OPENAI_API_KEY" not in content
     assert content["RELEVANCE_THRESHOLD"] == 0.8
+
+
+def test_validate_rejects_invalid_filter_preset(tmp_path, monkeypatch):
+    manager, _ = _build_manager(tmp_path, monkeypatch)
+    manager.config.update(
+        {
+            "NEWS_API_KEY": "k1",
+            "OPENAI_API_KEY": "k2",
+            "PRELLM_FILTER_PRESET": "invalid",
+        }
+    )
+    assert manager.validate() is False
+
+
+def test_validate_rejects_invalid_topic_override_shape(tmp_path, monkeypatch):
+    manager, _ = _build_manager(tmp_path, monkeypatch)
+    manager.config.update(
+        {
+            "NEWS_API_KEY": "k1",
+            "OPENAI_API_KEY": "k2",
+            "PRELLM_TOPIC_OVERRIDES": {"topic-x": "not-a-dict"},
+        }
+    )
+    assert manager.validate() is False

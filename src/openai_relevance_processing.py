@@ -281,7 +281,11 @@ class ArticleProcessor(ArticleAnalysisMixin):
             logger.info(f"RELEVANCE_THRESHOLD: {self.RELEVANCE_THRESHOLD}")
 
             # Deterministic pre-filter to avoid unnecessary LLM calls.
-            skip_llm, default_score = should_skip_llm(title, content)
+            skip_llm, default_score = should_skip_llm(
+                title,
+                content,
+                query_language=str(article.get("query_language", "") or ""),
+            )
             if not self.enable_llm_guardrail:
                 skip_llm = False
             if skip_llm:

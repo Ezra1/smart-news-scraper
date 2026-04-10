@@ -81,6 +81,8 @@ class CandidateFilter:
         self.log_drops = bool(self.config.get("PRELLM_LOG_DROPS", True))
         self.source_allowlist = self._parse_csv_list(self.config.get("NEWS_SOURCE_ALLOWLIST", ""))
         self.source_blocklist = self._parse_csv_list(self.config.get("NEWS_SOURCE_BLOCKLIST", ""))
+        topic_overrides = self.config.get("PRELLM_TOPIC_OVERRIDES", {}) or {}
+        self.topic_overrides = topic_overrides if isinstance(topic_overrides, dict) else {}
 
     def filter_candidates(
         self,
@@ -132,6 +134,7 @@ class CandidateFilter:
         seen_urls: set,
         seen_title_hashes: set,
     ) -> Tuple[bool, str, Dict[str, Any]]:
+        settings = self._settings_for_article(article)
         title = str(article.get("title", "") or "").strip()
         content = str(article.get("content", "") or "").strip()
         url = str(article.get("url", "") or "").strip()
@@ -147,17 +150,17 @@ class CandidateFilter:
             return False, "not_in_allowlist", {"domain": domain}
 
         content_len = len(content)
-        if content_len < self.min_content_chars:
+        if content_len < settings["min_content_chars"]:
             return False, "too_short", {"content_len": content_len, "domain": domain}
-        if content_len > self.max_content_chars:
+        if content_len > settings["max_content_chars"]:
             return False, "too_long", {"content_len": content_len, "domain": domain}
 
-        if self.dedup_by_url:
+        if settings["dedup_by_url"]:
             if url in seen_urls:
                 return False, "duplicate_url", {"domain": domain}
             seen_urls.add(url)
 
-        if self.dedup_by_title:
+        if settings["dedup_by_title"]:
             title_hash = hashlib.sha1(self._normalize_text(title).encode("utf-8")).hexdigest()
             if title_hash in seen_title_hashes:
                 return False, "duplicate_title", {"domain": domain}
@@ -168,11 +171,11 @@ class CandidateFilter:
         token_overlap = len(query_tokens & article_tokens) if query_tokens else 0
         # Fail open when tokenization yields no article tokens. This avoids
         # language bias for scripts where lexical overlap can be unreliable.
-        if query_tokens and article_tokens and token_overlap < self.min_query_token_overlap:
+        if query_tokens and article_tokens and token_overlap < settings["min_query_token_overlap"]:
             return False, "no_overlap", {"overlap": token_overlap, "domain": domain}
 
         is_incident, has_enforcement, has_pharma = is_incident_article(f"{title} {content}")
-        if self.require_incident_signal and not is_incident:
+        if settings["require_incident_signal"] and not is_incident:
             return False, "no_incident_signal", {"domain": domain}
 
         overlap_ratio = (
@@ -210,13 +213,17 @@ class CandidateFilter:
 
         trimmed: List[Dict[str, Any]] = []
         for _, items in buckets.items():
+            topic_top_k = self._settings_for_article(items[0]).get("top_k_per_term", self.top_k_per_term)
+            if topic_top_k <= 0:
+                trimmed.extend(items)
+                continue
             sorted_items = sorted(
                 items,
                 key=lambda a: float(a.get("prellm_heuristic_score", 0.0)),
                 reverse=True,
             )
-            kept = sorted_items[: self.top_k_per_term]
-            dropped = sorted_items[self.top_k_per_term :]
+            kept = sorted_items[: topic_top_k]
+            dropped = sorted_items[topic_top_k:]
             trimmed.extend(kept)
             for article in dropped:
                 dropped_by_reason["top_k_trim"] += 1
@@ -265,6 +272,60 @@ class CandidateFilter:
         if not query_term:
             query_term = " ".join(query_terms_by_id.values())
         return self._tokens(query_term)
+
+    def _settings_for_article(self, article: Dict[str, Any]) -> Dict[str, Any]:
+        base = {
+            "min_content_chars": self.min_content_chars,
+            "max_content_chars": self.max_content_chars,
+            "min_query_token_overlap": self.min_query_token_overlap,
+            "require_incident_signal": self.require_incident_signal,
+            "dedup_by_url": self.dedup_by_url,
+            "dedup_by_title": self.dedup_by_title,
+            "top_k_per_term": self.top_k_per_term,
+        }
+        topic_key = self._topic_key(article)
+        override = self.topic_overrides.get(topic_key, {}) if topic_key else {}
+        if not isinstance(override, dict):
+            return base
+        if not bool(override.get("enabled", False)):
+            return base
+        merged = dict(base)
+        for key in (
+            "min_content_chars",
+            "max_content_chars",
+            "min_query_token_overlap",
+            "require_incident_signal",
+            "dedup_by_url",
+            "dedup_by_title",
+            "top_k_per_term",
+        ):
+            if key in override:
+                merged[key] = override.get(key)
+        try:
+            merged["min_content_chars"] = int(merged["min_content_chars"])
+            merged["max_content_chars"] = int(merged["max_content_chars"])
+            merged["min_query_token_overlap"] = int(merged["min_query_token_overlap"])
+            merged["top_k_per_term"] = int(merged["top_k_per_term"])
+            merged["require_incident_signal"] = bool(merged["require_incident_signal"])
+            merged["dedup_by_url"] = bool(merged["dedup_by_url"])
+            merged["dedup_by_title"] = bool(merged["dedup_by_title"])
+        except (TypeError, ValueError):
+            return base
+        if merged["min_content_chars"] < 0 or merged["max_content_chars"] <= 0:
+            return base
+        if merged["min_content_chars"] > merged["max_content_chars"]:
+            return base
+        if merged["min_query_token_overlap"] < 0 or merged["top_k_per_term"] < 0:
+            return base
+        return merged
+
+    @staticmethod
+    def _topic_key(article: Dict[str, Any]) -> str:
+        for key in ("root_term", "query_term"):
+            value = str(article.get(key, "") or "").strip()
+            if value:
+                return value
+        return ""
 
     @staticmethod
     def _tokens(text: str) -> set:

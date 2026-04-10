@@ -59,13 +59,19 @@ def temp_search_terms_inside_data():
 
 
 class DummyDB:
-    def __init__(self, path):
+    def __init__(self, path, relevant_count=0):
         self.path = path
         self.queries = []
+        self.relevant_count = relevant_count
 
     def execute_query(self, query, params=None):
         self.queries.append((query, params))
         return []
+
+    def get_table_row_count(self, table_name):
+        if table_name == "relevant_articles":
+            return self.relevant_count
+        return 0
 
     def close(self):
         return None
@@ -184,6 +190,43 @@ class TestCLIWorkflow:
         extract_call = patches.extract_mock.call_args
         assert extract_call.args[0] == str(temp_db_inside_data)
         assert extract_call.args[1].endswith("relevant_articles.txt")
+
+    def test_cli_always_clears_raw_at_start(self, monkeypatch, temp_db_inside_data, temp_search_terms_inside_data):
+        db_instance = DummyDB(str(temp_db_inside_data))
+        _patch_pipeline(monkeypatch, db_instance)
+
+        inputs = _make_inputs(
+            str(temp_db_inside_data),
+            str(temp_search_terms_inside_data),
+        )
+        monkeypatch.setattr("builtins.input", inputs)
+
+        asyncio.run(cli.main())
+
+        assert any("DELETE FROM raw_articles" in query for query, _ in db_instance.queries)
+
+    def test_cli_export_and_clear_when_unexported_relevant_exists(
+        self, monkeypatch, temp_db_inside_data, temp_search_terms_inside_data
+    ):
+        db_instance = DummyDB(str(temp_db_inside_data), relevant_count=2)
+        patches = _patch_pipeline(monkeypatch, db_instance)
+
+        export_path = str(temp_db_inside_data.parent / "saved_results.txt")
+        inputs = _make_inputs(
+            str(temp_db_inside_data),
+            str(temp_search_terms_inside_data),
+            "2",
+            export_path,
+        )
+        monkeypatch.setattr("builtins.input", inputs)
+
+        asyncio.run(cli.main())
+
+        assert patches.extract_mock.call_count >= 1
+        first_export_call = patches.extract_mock.call_args_list[0]
+        assert first_export_call.args[0] == str(temp_db_inside_data)
+        assert first_export_call.args[1] == export_path
+        assert any("DELETE FROM relevant_articles" in query for query, _ in db_instance.queries)
 
     def test_cli_handles_empty_search_terms(self, monkeypatch, temp_db_inside_data, temp_search_terms_inside_data):
         """CLI should exit gracefully when no search terms are present."""

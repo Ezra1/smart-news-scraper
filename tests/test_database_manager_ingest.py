@@ -85,3 +85,12 @@ def test_insert_articles_batch_rolls_back_on_sqlite_error(article_manager, monke
     assert ids == [None, None]
     rows = db.execute_query("SELECT COUNT(*) AS c FROM raw_articles")
     assert rows[0]["c"] == 0
+
+
+def test_get_table_row_count_handles_known_tables(article_manager):
+    manager, db = article_manager
+    manager.insert_article(_article_payload("https://example.com/c1", title="Count Me"))
+
+    assert db.get_table_row_count("raw_articles") == 1
+    assert db.get_table_row_count("relevant_articles") == 0
+    assert db.get_table_row_count("unknown_table") == 0

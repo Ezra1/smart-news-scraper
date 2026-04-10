@@ -116,6 +116,22 @@ def _has(pattern: re.Pattern[str], text: str) -> bool:
     return bool(pattern.search(text or ""))
 
 
+def _is_non_english_text(text: str) -> bool:
+    """Heuristic: detect likely non-English text to avoid false pre-LLM skips."""
+    sample = str(text or "")
+    if not sample.strip():
+        return False
+    ascii_letters = sum(1 for ch in sample if ("a" <= ch.lower() <= "z"))
+    non_ascii_letters = sum(1 for ch in sample if ch.isalpha() and ord(ch) > 127)
+    if non_ascii_letters == 0:
+        return False
+    total_letters = ascii_letters + non_ascii_letters
+    if total_letters <= 0:
+        return False
+    # Treat as non-English when non-ASCII script dominates.
+    return (non_ascii_letters / total_letters) >= 0.30
+
+
 def is_incident_article(text: str) -> Tuple[bool, bool, bool]:
     """Check if article likely describes a pharma crime incident.
 
@@ -140,12 +156,18 @@ def is_incident_article(text: str) -> Tuple[bool, bool, bool]:
     return (is_incident, has_enforcement, has_pharma)
 
 
-def should_skip_llm(title: str, content: str) -> Tuple[bool, Optional[float]]:
+def should_skip_llm(title: str, content: str, query_language: str = "") -> Tuple[bool, Optional[float]]:
     """Determine if we can skip LLM and assign score directly.
 
     Returns: (skip_llm, default_score)
     """
     combined = f"{title or ''} {content or ''}"
+    normalized_query_language = str(query_language or "").strip().lower()
+    if normalized_query_language and normalized_query_language != "en":
+        return (False, None)
+    if _is_non_english_text(combined):
+        return (False, None)
+
     _, has_enforcement, has_pharma = is_incident_article(combined)
 
     if not has_pharma:

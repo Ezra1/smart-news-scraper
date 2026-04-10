@@ -120,6 +120,7 @@ try:
         setup_directories()
         print("\nSmart News Scraper - Interactive Mode\n")
         db = None
+        results_exported_this_session = False
 
         try:
             config_manager = ConfigManager()
@@ -151,12 +152,36 @@ try:
                 print(f"Invalid search terms path: {e}")
                 return
 
-            delete_old_raw = input("Delete old raw articles before starting? (Y/N): ").strip().lower() == "y"
-            if delete_old_raw:
-                db.execute_query("DELETE FROM raw_articles;")
+            db.execute_query("DELETE FROM raw_articles;")
 
-            delete_old_relevant = input("Delete old relevant articles before starting? (Y/N): ").strip().lower() == "y"
-            if delete_old_relevant:
+            existing_relevant_rows = db.get_table_row_count("relevant_articles")
+            if existing_relevant_rows > 0:
+                if not results_exported_this_session:
+                    print(
+                        "\nRelevant articles already exist and were not exported this session.\n"
+                        "Choose one option before continuing:"
+                    )
+                    print("1) Clear results")
+                    print("2) Export and clear results")
+                    choice = input("Enter 1 or 2: ").strip()
+                    if choice == "2":
+                        default_output = str(Path.home() / "Desktop" / "relevant_articles.txt")
+                        export_path_input = input(
+                            f"Enter export file path (leave blank for '{default_output}'): "
+                        ).strip()
+                        export_path = export_path_input or default_output
+                        try:
+                            extract_cleaned_data(db_path, export_path)
+                            print(f"Relevant articles exported to {export_path}")
+                            results_exported_this_session = True
+                        except Exception as e:
+                            logger.error(f"Export before clear failed: {e}")
+                            print(f"Export failed: {e}")
+                            print("Aborting run to avoid deleting unexported results.")
+                            return
+                    elif choice != "1":
+                        print("Run cancelled. No results were cleared.")
+                        return
                 db.execute_query("DELETE FROM relevant_articles;")
 
             print(f"Loading search terms from {search_terms_file}...")
@@ -203,6 +228,7 @@ try:
                         relevance_filter.process_latest_results()
                         # Analyze the processed results
                         relevance_filter.analyze_results()
+                        results_exported_this_session = False
                 else:
                     # Print a message if no articles were fetched
                     print("No articles fetched. Proceeding with existing data...")
@@ -222,6 +248,7 @@ try:
                             relevance_filter = RelevanceFilter(article_manager)
                             # Analyze the processed results
                             relevance_filter.analyze_results()
+                            results_exported_this_session = False
 
                 # Print a message indicating the completion of processing
                 print("\nProcessing completed.")
@@ -233,6 +260,7 @@ try:
                 # Extract relevant articles from the database and save them to the output file
                 extract_cleaned_data(db_path, output_file)
                 print(f"Relevant articles extracted to {output_file}")
+                results_exported_this_session = True
 
             except Exception as e:
                 logger.error(f"Error during processing: {e}")
