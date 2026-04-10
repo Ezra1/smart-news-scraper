@@ -38,7 +38,7 @@ if sys.platform == "win32":
 
 setup(
     name="SmartNewsScraper",
-    version="1.0",
+    version="2.1.0",
     description="Smart News Scraper Application",
     options={"build_exe": build_exe_options},
     executables=[

@@ -164,6 +164,7 @@ class ArticleProcessor(ArticleAnalysisMixin):
             "published_at": article.get("published_at", ""),
             "relevance_score": relevance_score,
         }
+        insert_kwargs.update(self.article_manager.api_fields_from_article(article))
         if include_extended_fields:
             insert_kwargs.update(
                 {

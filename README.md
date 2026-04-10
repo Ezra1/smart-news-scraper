@@ -8,7 +8,7 @@ A modern application for scraping, analyzing, and managing news articles based o
 -  **AI-Powered Analysis**: Evaluate article relevance using OpenAI's API
 -  **Incident-Focused Scoring**: Prioritize concrete incidents over general policy/trend coverage
 -  **Custom Search Terms**: Manage and organize your search terms
--  **High-Recall Multilingual Query Expansion**: Expand terms across configurable languages with AI + fallback translations
+-  **Multilingual Query Expansion**: Expand terms across configurable languages with AI + fallback translations
 -  **Visual Progress Tracking**: Real-time processing status and progress indicators
 -  **Persistent Storage**: SQLite database for storing articles and search terms
 -  **Import/Export**: Support for importing/exporting search terms and results
@@ -108,16 +108,11 @@ The GUI provides:
 | NEWS_API_BASE_URL | TheNewsAPI base URL | https://api.thenewsapi.com/v1/news |
 | NEWS_API_REQUESTS_PER_SECOND | Rate limit for TheNewsAPI | 1 |
 | OPENAI_REQUESTS_PER_MINUTE | Rate limit for OpenAI API | 60 |
-| HIGH_RECALL_MODE | Use a lower threshold during broad recall runs | false |
-| HIGH_RECALL_RELEVANCE_THRESHOLD | Relevance threshold used when high-recall mode is enabled | 0.6 |
 | QUERY_EXPANSION_ENABLED | Enable/disable multilingual query expansion | true |
 | QUERY_EXPANSION_USE_AI | Use OpenAI for query variants (fallback map still applies on failures) | true |
 | QUERY_EXPANSION_VARIANTS_PER_TERM | Max generated variants per root term/language | 3 |
 | QUERY_EXPANSION_MAX_TOTAL_QUERIES | Hard cap across expanded query plan | 120 |
-| QUERY_EXPANSION_LANGUAGES | Language codes used for expansion | en,es,fr,pt,ar,ru,zh,hi |
-| AUTO_REGION_MAPPING_ENABLED | Auto-apply TheNewsAPI regions from language map | true |
-| REGION_OVERRIDE_ENABLED | Force explicit regions instead of language map | false |
-| QUERY_EXPANSION_REGIONS | Comma-separated region override values | "" |
+| QUERY_EXPANSION_LANGUAGES | Comma-separated language codes (TheNewsAPI list; see GUI checkboxes) | en |
 | REQUEST_BUDGET_MODE | Request planning strategy for fetch pass | aggressive |
 | REQUEST_BUDGET_PER_RUN | Maximum requests allowed for one run | 200 |
 | BATCH_SIZE | Number of articles to process in parallel | 100 |
@@ -132,9 +127,10 @@ loaded from environment variables when present and are never written to
 
 ## Multilingual Query Expansion Defaults
 
-- Default expansion languages come from `QUERY_EXPANSION_LANGUAGES` in `config/config.template.json` (`en,es,fr,pt,ar,ru,zh,hi`).
+- Default expansion languages come from `QUERY_EXPANSION_LANGUAGES` in `config/config.template.json` (template uses a short default; the GUI lists every code TheNewsAPI documents, including `multi`).
 - If that value is empty at runtime, the planner falls back to `en`.
-- Language-specific fallback variants and region mapping are defined in `src/query_expander.py` (`FALLBACK_TRANSLATIONS` and `DEFAULT_LANGUAGE_REGION_MAP`).
+- Language-specific fallback variants are defined in `src/query_expander.py` (`FALLBACK_TRANSLATIONS`). Only a few built-in English root terms have deterministic non-English fallbacks; for other terms, AI expansion is used when enabled, otherwise the original term is reused per language.
+- Each planned query sets TheNewsAPI’s `language` query parameter when a language code is present.
 - Query expansion uses AI first when enabled, and automatically falls back to deterministic translations if OpenAI is unavailable or returns invalid output.
 
 ## Architecture

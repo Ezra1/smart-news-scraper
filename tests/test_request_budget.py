@@ -13,9 +13,9 @@ def test_resolve_request_budget_mode_defaults():
 
 def test_apply_budget_to_queries_limits_and_prioritizes():
     queries = [
-        QueryPlanItem(term="q1", root_term="a", language="en", regions=[], priority=3),
-        QueryPlanItem(term="q2", root_term="a", language="es", regions=[], priority=1),
-        QueryPlanItem(term="q3", root_term="a", language="fr", regions=[], priority=2),
+        QueryPlanItem(term="q1", root_term="a", language="en", priority=3),
+        QueryPlanItem(term="q2", root_term="a", language="es", priority=1),
+        QueryPlanItem(term="q3", root_term="a", language="fr", priority=2),
     ]
     limited = apply_budget_to_queries(queries, 2)
     assert [item.term for item in limited] == ["q2", "q3"]

@@ -1,4 +1,4 @@
-"""Pre-LLM candidate filtering with high-recall heuristics and stage stats."""
+"""Pre-LLM candidate filtering with heuristic checks and stage stats."""
 
 from __future__ import annotations
 
@@ -171,7 +171,12 @@ class CandidateFilter:
         token_overlap = len(query_tokens & article_tokens) if query_tokens else 0
         # Fail open when tokenization yields no article tokens. This avoids
         # language bias for scripts where lexical overlap can be unreliable.
-        if query_tokens and article_tokens and token_overlap < settings["min_query_token_overlap"]:
+        if (
+            settings.get("overlap_enabled", True)
+            and query_tokens
+            and article_tokens
+            and token_overlap < settings["min_query_token_overlap"]
+        ):
             return False, "no_overlap", {"overlap": token_overlap, "domain": domain}
 
         is_incident, has_enforcement, has_pharma = is_incident_article(f"{title} {content}")
@@ -271,13 +276,52 @@ class CandidateFilter:
             query_term = query_terms_by_id.get(term_id, "")
         if not query_term:
             query_term = " ".join(query_terms_by_id.values())
-        return self._tokens(query_term)
+        tokens = set(self._tokens(query_term))
+        topic_key = self._topic_key(article)
+        topic_keywords = self._topic_keywords(topic_key)
+        if topic_keywords:
+            tokens.update(topic_keywords)
+        return tokens
+
+    def _topic_keywords(self, topic_key: str) -> set:
+        if not topic_key:
+            return set()
+        override = self.topic_overrides.get(topic_key, {})
+        if isinstance(override, dict):
+            keywords = override.get("keywords", [])
+            if isinstance(keywords, list):
+                combined = " ".join(str(word) for word in keywords if str(word).strip())
+                exact_tokens = self._tokens(combined)
+                if exact_tokens:
+                    return exact_tokens
+
+        topic_key_tokens = self._tokens(topic_key)
+        if not topic_key_tokens:
+            return set()
+
+        best_overlap = 0
+        best_tokens = set()
+        for override_topic, override_payload in self.topic_overrides.items():
+            if not isinstance(override_payload, dict):
+                continue
+            keywords = override_payload.get("keywords", [])
+            if not isinstance(keywords, list):
+                continue
+            candidate_text = f"{override_topic} " + " ".join(str(word) for word in keywords if str(word).strip())
+            candidate_tokens = self._tokens(candidate_text)
+            overlap = len(topic_key_tokens & candidate_tokens)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_tokens = self._tokens(" ".join(str(word) for word in keywords if str(word).strip()))
+
+        return best_tokens if best_overlap > 0 else set()
 
     def _settings_for_article(self, article: Dict[str, Any]) -> Dict[str, Any]:
         base = {
             "min_content_chars": self.min_content_chars,
             "max_content_chars": self.max_content_chars,
             "min_query_token_overlap": self.min_query_token_overlap,
+            "overlap_enabled": True,
             "require_incident_signal": self.require_incident_signal,
             "dedup_by_url": self.dedup_by_url,
             "dedup_by_title": self.dedup_by_title,
@@ -294,6 +338,7 @@ class CandidateFilter:
             "min_content_chars",
             "max_content_chars",
             "min_query_token_overlap",
+            "overlap_enabled",
             "require_incident_signal",
             "dedup_by_url",
             "dedup_by_title",
@@ -306,6 +351,7 @@ class CandidateFilter:
             merged["max_content_chars"] = int(merged["max_content_chars"])
             merged["min_query_token_overlap"] = int(merged["min_query_token_overlap"])
             merged["top_k_per_term"] = int(merged["top_k_per_term"])
+            merged["overlap_enabled"] = bool(merged["overlap_enabled"])
             merged["require_incident_signal"] = bool(merged["require_incident_signal"])
             merged["dedup_by_url"] = bool(merged["dedup_by_url"])
             merged["dedup_by_title"] = bool(merged["dedup_by_title"])

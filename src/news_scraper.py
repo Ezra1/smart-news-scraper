@@ -200,12 +200,11 @@ class NewsArticleScraper:
                 all_articles.extend(persisted)
 
                 logger.info(
-                    "Processed %s TheNewsAPI articles for term='%s' (root='%s', lang='%s', regions=%s)",
+                    "Processed %s TheNewsAPI articles for term='%s' (root='%s', lang='%s')",
                     len(raw_articles),
                     term,
                     root_term,
                     query_spec.get("language", ""),
-                    query_spec.get("regions", []),
                 )
             except Exception as e:
                 logger.error("Error processing articles for term '%s': %s", term, e)
@@ -221,7 +220,6 @@ class NewsArticleScraper:
                 "term": term,
                 "root_term": term,
                 "language": self.language,
-                "regions": [],
             }
         if isinstance(term_entry, dict):
             term = str(term_entry.get("term", "")).strip()
@@ -229,15 +227,10 @@ class NewsArticleScraper:
                 return None
             root_term = str(term_entry.get("root_term", term)).strip() or term
             language = str(term_entry.get("language", self.language) or "").strip()
-            regions = term_entry.get("regions", [])
-            if not isinstance(regions, list):
-                regions = []
-            regions = [str(r).strip().lower() for r in regions if str(r).strip()]
             return {
                 "term": term,
                 "root_term": root_term,
                 "language": language,
-                "regions": regions,
             }
         return None
 
@@ -318,15 +311,10 @@ class NewsArticleScraper:
             "limit": self.articles_count,
         }
         language = self.language
-        regions: List[str] = []
         if isinstance(query_spec, dict):
             language = str(query_spec.get("language", language) or "").strip()
-            regions = query_spec.get("regions", []) if isinstance(query_spec.get("regions", []), list) else []
         if language:
             payload["language"] = language
-        if regions:
-            # TheNewsAPI accepts comma-separated countries for broad geo targeting.
-            payload["countries"] = ",".join(regions)
         payload.update(date_filters)
         return payload
 
@@ -597,11 +585,16 @@ class NewsArticleScraper:
         event_uri = article.get("eventUri") or article.get("eventURI") or article.get("event")
         image_url = article.get("image") or article.get("image_url") or article.get("urlToImage")
 
+        keywords_val = article.get("keywords", "")
+        if isinstance(keywords_val, list):
+            keywords_val = ", ".join(str(x).strip() for x in keywords_val if str(x).strip())
+
         return {
             "title": title,
             "content": body,
             "description": article.get("description", ""),
             "snippet": snippet,
+            "keywords": keywords_val if isinstance(keywords_val, str) else str(keywords_val or ""),
             "source": {"name": source_name} if source_name else source,
             "url": article.get("url") or article.get("uri", ""),
             "url_to_image": image_url or "",

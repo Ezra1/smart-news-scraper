@@ -18,13 +18,15 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QTabWidget, QLineEdit, QFrame, QListWidget, QProgressBar,
     QScrollArea, QTreeWidget, QTreeWidgetItem, QMessageBox, QFileDialog,
     QComboBox, QSlider, QInputDialog, QGroupBox, QMenu, QGridLayout, QTextEdit,
-    QRadioButton, QDateEdit, QButtonGroup, QCheckBox, QSpinBox
+    QRadioButton, QDateEdit, QButtonGroup, QCheckBox, QSpinBox, QToolButton, QStyle,
+    QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate, QObject
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate, QObject, QSize
 from PyQt6.QtGui import QFont, QIcon, QAction
 from pathlib import Path
 from datetime import datetime, timedelta
 import asyncio
+import json
 import logging
 import re
 import sys
@@ -36,42 +38,68 @@ from src.database_manager import DatabaseManager, ArticleManager, SearchTermMana
 from src.pipeline_manager import PipelineManager
 from src.pipeline_factory import create_pipeline
 from src.api_validator import validate_news_api_key, validate_openai_api_key
+from src.openai_client import get_client
 from src.gui.status_parser import StatusParser, StatusUpdate
 from src.gui.processing_state import ProcessingState
+from src.utils.article_normalization import extract_source_name
 
 logger = setup_logging(__name__)
 
+# Codes align with TheNewsAPI supported languages (including `multi`).
 SUPPORTED_LANGUAGES = [
+    ("ar", "Arabic"),
+    ("bg", "Bulgarian"),
+    ("bn", "Bengali"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("de", "German"),
+    ("el", "Greek"),
     ("en", "English"),
     ("es", "Spanish"),
+    ("et", "Estonian"),
+    ("fa", "Persian"),
+    ("fi", "Finnish"),
     ("fr", "French"),
-    ("pt", "Portuguese"),
-    ("ar", "Arabic"),
-    ("ru", "Russian"),
-    ("zh", "Chinese"),
+    ("he", "Hebrew"),
     ("hi", "Hindi"),
+    ("hr", "Croatian"),
+    ("hu", "Hungarian"),
+    ("id", "Indonesian"),
+    ("it", "Italian"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("lt", "Lithuanian"),
+    ("multi", "Multilingual"),
+    ("nl", "Dutch"),
+    ("no", "Norwegian"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("sk", "Slovak"),
+    ("sv", "Swedish"),
+    ("ta", "Tamil"),
+    ("th", "Thai"),
+    ("tr", "Turkish"),
+    ("uk", "Ukrainian"),
+    ("vi", "Vietnamese"),
+    ("zh", "Chinese"),
 ]
 
-SUPPORTED_REGIONS = [
-    ("us", "United States"),
-    ("gb", "United Kingdom"),
-    ("ca", "Canada"),
-    ("au", "Australia"),
-    ("es", "Spain"),
-    ("mx", "Mexico"),
-    ("fr", "France"),
-    ("pt", "Portugal"),
-    ("br", "Brazil"),
-    ("ae", "UAE"),
-    ("sa", "Saudi Arabia"),
-    ("eg", "Egypt"),
-    ("ru", "Russia"),
-    ("kz", "Kazakhstan"),
-    ("cn", "China"),
-    ("hk", "Hong Kong"),
-    ("sg", "Singapore"),
-    ("tw", "Taiwan"),
-    ("in", "India"),
+# Results table: field key, header label, default width (API-aligned export uses same keys).
+RESULTS_TABLE_COLUMNS = [
+    ("api_uuid", "UUID", 200),
+    ("title", "Title", 240),
+    ("description", "Description", 200),
+    ("keywords", "Keywords", 160),
+    ("snippet", "Snippet", 180),
+    ("url", "URL", 260),
+    ("url_to_image", "Image URL", 200),
+    ("language", "Language", 64),
+    ("published_at", "Published", 168),
+    ("source", "Source", 120),
+    ("categories_display", "Categories", 140),
+    ("relevance_score", "Relevance", 80),
 ]
 
 FILTER_PRESET_MAP = {
@@ -82,7 +110,6 @@ FILTER_PRESET_MAP = {
         "require_incident_signal": False,
         "dedup_by_url": True,
         "dedup_by_title": True,
-        "top_k_per_term": 200,
     },
     "medium": {
         "min_content_chars": 120,
@@ -91,7 +118,6 @@ FILTER_PRESET_MAP = {
         "require_incident_signal": False,
         "dedup_by_url": True,
         "dedup_by_title": True,
-        "top_k_per_term": 100,
     },
     "most_aggressive": {
         "min_content_chars": 250,
@@ -100,7 +126,6 @@ FILTER_PRESET_MAP = {
         "require_incident_signal": True,
         "dedup_by_url": True,
         "dedup_by_title": True,
-        "top_k_per_term": 50,
     },
 }
 
@@ -674,8 +699,8 @@ class NewsScraperGUI(QMainWindow):
         """)
 
     def _create_config_tab(self):
-        config_widget = QWidget()
-        layout = QVBoxLayout(config_widget)
+        config_content = QWidget()
+        layout = QVBoxLayout(config_content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
@@ -754,31 +779,6 @@ class NewsScraperGUI(QMainWindow):
         language_row.addStretch()
         multilingual_layout.addLayout(language_row)
 
-        self.auto_region_mapping = QCheckBox("Auto-map regions from selected languages")
-        self.auto_region_mapping.setChecked(bool(self.config_manager.get("AUTO_REGION_MAPPING_ENABLED", True)))
-        multilingual_layout.addWidget(self.auto_region_mapping)
-
-        self.region_override_enabled = QCheckBox("Advanced: manually override regions")
-        self.region_override_enabled.setChecked(bool(self.config_manager.get("REGION_OVERRIDE_ENABLED", False)))
-        multilingual_layout.addWidget(self.region_override_enabled)
-
-        self.region_checkboxes = {}
-        region_row = QHBoxLayout()
-        region_row.setSpacing(8)
-        selected_regions = {
-            part.strip().lower()
-            for part in str(self.config_manager.get("QUERY_EXPANSION_REGIONS", "")).split(",")
-            if part.strip()
-        }
-        for code, label in SUPPORTED_REGIONS:
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(code in selected_regions)
-            self.region_checkboxes[code] = checkbox
-            region_row.addWidget(checkbox)
-        region_row.addStretch()
-        multilingual_layout.addLayout(region_row)
-        self.region_override_enabled.toggled.connect(self._toggle_region_override_controls)
-        self._toggle_region_override_controls(self.region_override_enabled.isChecked())
         layout.addWidget(multilingual_group)
 
         # Add ChatGPT Context Message group
@@ -802,11 +802,17 @@ class NewsScraperGUI(QMainWindow):
         layout.addWidget(save_btn)
 
         layout.addStretch()
-        self.tabs.addTab(config_widget, "Configuration")
+
+        # Keep complex config controls readable on shorter window heights.
+        config_scroll = QScrollArea()
+        config_scroll.setWidgetResizable(True)
+        config_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        config_scroll.setWidget(config_content)
+        self.tabs.addTab(config_scroll, "Configuration")
 
     def _create_filtering_controls_tab(self):
-        filter_widget = QWidget()
-        layout = QVBoxLayout(filter_widget)
+        filter_content = QWidget()
+        layout = QVBoxLayout(filter_content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
@@ -814,15 +820,21 @@ class NewsScraperGUI(QMainWindow):
         title.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
         layout.addWidget(title)
         info = QLabel(
-            "Use simple filtering strength presets, then optionally customize by topic.\n"
-            "Note: non-English articles skip this pre-LLM filtering stage."
+            "Use simple filtering strength presets; the same rules apply to every search topic.\n"
+            "Note: non-English articles skip this before-AI filtering stage."
         )
         info.setWordWrap(True)
         layout.addWidget(info)
 
         preset_group = QGroupBox("Overall Filtering Strength")
         preset_layout = QHBoxLayout(preset_group)
-        preset_layout.addWidget(QLabel("Preset:"))
+        preset_layout.addWidget(
+            self._create_help_label(
+                "Preset:",
+                "Chooses a ready-made strictness level. More permissive keeps more articles, "
+                "while more aggressive removes more before AI review."
+            )
+        )
         self.filter_preset_combo = QComboBox()
         self.filter_preset_combo.addItem("More Permissive (recommended)", "more_permissive")
         self.filter_preset_combo.addItem("Medium", "medium")
@@ -835,64 +847,102 @@ class NewsScraperGUI(QMainWindow):
         preset_layout.addStretch()
         layout.addWidget(preset_group)
 
-        global_group = QGroupBox("Global Rule Details")
+        global_group = QGroupBox("Global Filter Settings")
         global_layout = QGridLayout(global_group)
         self.filter_min_chars_spin = QSpinBox()
         self.filter_min_chars_spin.setRange(0, 200000)
         self.filter_min_chars_spin.setValue(int(self.config_manager.get("PRELLM_MIN_CONTENT_CHARS", 120)))
+        self.filter_min_chars_spin.setSuffix(" characters")
         self.filter_max_chars_spin = QSpinBox()
         self.filter_max_chars_spin.setRange(1, 500000)
         self.filter_max_chars_spin.setValue(int(self.config_manager.get("PRELLM_MAX_CONTENT_CHARS", 20000)))
+        self.filter_max_chars_spin.setSuffix(" characters")
         self.filter_min_overlap_spin = QSpinBox()
         self.filter_min_overlap_spin.setRange(0, 20)
         self.filter_min_overlap_spin.setValue(int(self.config_manager.get("PRELLM_MIN_QUERY_TOKEN_OVERLAP", 1)))
-        self.filter_top_k_spin = QSpinBox()
-        self.filter_top_k_spin.setRange(0, 10000)
-        self.filter_top_k_spin.setValue(int(self.config_manager.get("PRELLM_TOP_K_PER_TERM", 100)))
-        self.filter_require_incident = QCheckBox("Require clear incident signal")
+        self.filter_min_overlap_spin.setSuffix(" matches")
+        self.filter_require_incident = QCheckBox("Only keep articles that clearly describe an incident")
         self.filter_require_incident.setChecked(bool(self.config_manager.get("PRELLM_REQUIRE_INCIDENT_SIGNAL", False)))
         self.filter_dedup_url = QCheckBox("Remove duplicate URLs")
         self.filter_dedup_url.setChecked(bool(self.config_manager.get("PRELLM_DEDUP_BY_URL", True)))
         self.filter_dedup_title = QCheckBox("Remove duplicate titles")
         self.filter_dedup_title.setChecked(bool(self.config_manager.get("PRELLM_DEDUP_BY_TITLE", True)))
 
-        global_layout.addWidget(QLabel("Minimum content length:"), 0, 0)
+        global_layout.addWidget(
+            self._create_help_label(
+                "Minimum content length:",
+                "Rejects articles that are too short to be useful."
+            ),
+            0, 0
+        )
         global_layout.addWidget(self.filter_min_chars_spin, 0, 1)
-        global_layout.addWidget(QLabel("Maximum content length:"), 1, 0)
+        global_layout.addWidget(
+            self._create_help_label(
+                "Maximum content length:",
+                "Rejects articles that are unusually long and often noisy or off-topic."
+            ),
+            1, 0
+        )
         global_layout.addWidget(self.filter_max_chars_spin, 1, 1)
-        global_layout.addWidget(QLabel("Minimum topic overlap tokens:"), 2, 0)
+        global_layout.addWidget(
+            self._create_help_label(
+                "Minimum keyword matches with topic:",
+                "Minimum number of topic words that must appear in the article."
+            ),
+            2, 0
+        )
         global_layout.addWidget(self.filter_min_overlap_spin, 2, 1)
-        global_layout.addWidget(QLabel("Max articles kept per topic:"), 3, 0)
-        global_layout.addWidget(self.filter_top_k_spin, 3, 1)
-        global_layout.addWidget(self.filter_require_incident, 4, 0, 1, 2)
-        global_layout.addWidget(self.filter_dedup_url, 5, 0, 1, 2)
-        global_layout.addWidget(self.filter_dedup_title, 6, 0, 1, 2)
+        global_layout.addWidget(
+            self._create_checkbox_with_help(
+                self.filter_require_incident,
+                "When on, only articles with clear incident language are kept."
+            ),
+            3, 0, 1, 2
+        )
+        global_layout.addWidget(
+            self._create_checkbox_with_help(
+                self.filter_dedup_url,
+                "Removes repeated articles that share the same web link."
+            ),
+            4, 0, 1, 2
+        )
+        global_layout.addWidget(
+            self._create_checkbox_with_help(
+                self.filter_dedup_title,
+                "Removes repeated articles that have the same or near-identical title."
+            ),
+            5, 0, 1, 2
+        )
         layout.addWidget(global_group)
 
-        topic_group = QGroupBox("Per-Topic Customization")
-        topic_layout = QGridLayout(topic_group)
-        self.filter_topic_combo = QComboBox()
-        self.filter_topic_combo.currentIndexChanged.connect(self._on_filter_topic_changed)
-        self.filter_topic_enabled = QCheckBox("Use custom filtering for this topic")
-        self.filter_topic_min_overlap_spin = QSpinBox()
-        self.filter_topic_min_overlap_spin.setRange(0, 20)
-        self.filter_topic_top_k_spin = QSpinBox()
-        self.filter_topic_top_k_spin.setRange(0, 10000)
-        self.filter_topic_require_incident = QCheckBox("Require clear incident signal for this topic")
-        self.filter_topic_note = QLabel("Choose a topic from Search Terms to customize.")
-        self.filter_topic_note.setWordWrap(True)
-        topic_layout.addWidget(QLabel("Topic:"), 0, 0)
-        topic_layout.addWidget(self.filter_topic_combo, 0, 1)
-        topic_layout.addWidget(self.filter_topic_enabled, 1, 0, 1, 2)
-        topic_layout.addWidget(QLabel("Min overlap tokens:"), 2, 0)
-        topic_layout.addWidget(self.filter_topic_min_overlap_spin, 2, 1)
-        topic_layout.addWidget(QLabel("Max kept for this topic:"), 3, 0)
-        topic_layout.addWidget(self.filter_topic_top_k_spin, 3, 1)
-        topic_layout.addWidget(self.filter_topic_require_incident, 4, 0, 1, 2)
-        topic_layout.addWidget(self.filter_topic_note, 5, 0, 1, 2)
-        layout.addWidget(topic_group)
+        topic_words_group = QGroupBox("Per-Topic Filter Words")
+        topic_words_layout = QVBoxLayout(topic_words_group)
+        topic_words_layout.addWidget(
+            QLabel("Edit the words used to check topic overlap for each topic.")
+        )
+        topic_selector_row = QHBoxLayout()
+        topic_selector_row.addWidget(QLabel("Topic:"))
+        self.filter_topic_words_combo = QComboBox()
+        self.filter_topic_words_combo.currentIndexChanged.connect(self._on_filter_topic_words_topic_changed)
+        topic_selector_row.addWidget(self.filter_topic_words_combo)
+        topic_words_layout.addLayout(topic_selector_row)
 
-        insights_group = QGroupBox("Filtering Insights (latest decisions)")
+        self.filter_topic_words_list = QListWidget()
+        self.filter_topic_words_list.setMinimumHeight(140)
+        topic_words_layout.addWidget(self.filter_topic_words_list)
+
+        topic_words_buttons = QHBoxLayout()
+        add_word_btn = QPushButton("Add Word")
+        add_word_btn.clicked.connect(self._add_filter_topic_word)
+        remove_word_btn = QPushButton("Remove Selected Word")
+        remove_word_btn.clicked.connect(self._remove_filter_topic_word)
+        topic_words_buttons.addWidget(add_word_btn)
+        topic_words_buttons.addWidget(remove_word_btn)
+        topic_words_buttons.addStretch()
+        topic_words_layout.addLayout(topic_words_buttons)
+        layout.addWidget(topic_words_group)
+
+        insights_group = QGroupBox("Filtering Insights (recent decisions)")
         insights_layout = QVBoxLayout(insights_group)
         self.filter_insights_output = QTextEdit()
         self.filter_insights_output.setReadOnly(True)
@@ -911,13 +961,57 @@ class NewsScraperGUI(QMainWindow):
         layout.addLayout(button_row)
         layout.addStretch()
 
-        self._filter_topic_overrides = self.config_manager.get("PRELLM_TOPIC_OVERRIDES", {}) or {}
-        if not isinstance(self._filter_topic_overrides, dict):
-            self._filter_topic_overrides = {}
-        self._current_filter_topic = ""
-        self._refresh_filter_topic_selector()
+        self._filter_topic_word_overrides = self._topic_word_overrides_from_config()
+        self._refresh_filter_topic_words_topics()
         self._update_filtering_insights()
-        self.tabs.addTab(filter_widget, "Filtering Controls")
+
+        # Prevent dense filtering controls from collapsing when window height is constrained.
+        filter_scroll = QScrollArea()
+        filter_scroll.setWidgetResizable(True)
+        filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        filter_scroll.setWidget(filter_content)
+        self.tabs.addTab(filter_scroll, "Filtering Controls")
+
+    def _create_help_label(self, text: str, tooltip: str) -> QWidget:
+        """Create a label with a compact hover-help icon."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        label = QLabel(text)
+        label.setToolTip(tooltip)
+        row.addWidget(label)
+
+        row.addWidget(self._create_info_tool_button(tooltip))
+        row.addStretch()
+        return container
+
+    def _create_checkbox_with_help(self, checkbox: QCheckBox, tooltip: str) -> QWidget:
+        """Attach a hover-help icon to a checkbox option."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        checkbox.setToolTip(tooltip)
+        row.addWidget(checkbox)
+
+        row.addWidget(self._create_info_tool_button(tooltip))
+        row.addStretch()
+        return container
+
+    def _create_info_tool_button(self, tooltip: str) -> QToolButton:
+        """Small (i) in circle using the platform information icon."""
+        btn = QToolButton()
+        btn.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        btn.setAutoRaise(True)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setToolTip(tooltip)
+        btn.setFixedSize(20, 20)
+        btn.setIconSize(QSize(16, 16))
+        return btn
 
     def _on_filter_preset_changed(self, _index=None):
         preset_key = self.filter_preset_combo.currentData()
@@ -925,75 +1019,166 @@ class NewsScraperGUI(QMainWindow):
         self.filter_min_chars_spin.setValue(int(preset_values["min_content_chars"]))
         self.filter_max_chars_spin.setValue(int(preset_values["max_content_chars"]))
         self.filter_min_overlap_spin.setValue(int(preset_values["min_query_token_overlap"]))
-        self.filter_top_k_spin.setValue(int(preset_values["top_k_per_term"]))
         self.filter_require_incident.setChecked(bool(preset_values["require_incident_signal"]))
         self.filter_dedup_url.setChecked(bool(preset_values["dedup_by_url"]))
         self.filter_dedup_title.setChecked(bool(preset_values["dedup_by_title"]))
 
-    def _refresh_filter_topic_selector(self):
-        topic_terms = [term["term"] for term in self.search_manager.get_search_terms()]
-        current = self.filter_topic_combo.currentText() if self.filter_topic_combo.count() else ""
-        self.filter_topic_combo.blockSignals(True)
-        self.filter_topic_combo.clear()
-        self.filter_topic_combo.addItems(topic_terms)
-        self.filter_topic_combo.blockSignals(False)
-        if not topic_terms:
-            self._current_filter_topic = ""
-            self.filter_topic_note.setText("No search terms yet. Add terms in the Search Terms tab.")
-            self._load_filter_topic_controls("")
+    def _topic_word_overrides_from_config(self) -> dict:
+        raw_overrides = self.config_manager.get("PRELLM_TOPIC_OVERRIDES", {}) or {}
+        if not isinstance(raw_overrides, dict):
+            return {}
+        cleaned: dict = {}
+        for topic, override in raw_overrides.items():
+            if not isinstance(topic, str) or not topic.strip():
+                continue
+            if not isinstance(override, dict):
+                continue
+            words = override.get("keywords", [])
+            if not isinstance(words, list):
+                continue
+            normalized_words = []
+            seen = set()
+            for word in words:
+                term = str(word).strip().lower()
+                if not term or term in seen:
+                    continue
+                seen.add(term)
+                normalized_words.append(term)
+            cleaned[topic.strip()] = normalized_words
+        return cleaned
+
+    def _refresh_filter_topic_words_topics(self):
+        if not hasattr(self, "filter_topic_words_combo"):
             return
-        if current in topic_terms:
-            self.filter_topic_combo.setCurrentText(current)
-            self._load_filter_topic_controls(current)
-        else:
-            self.filter_topic_combo.setCurrentIndex(0)
-            self._load_filter_topic_controls(self.filter_topic_combo.currentText())
+        topics = []
+        for topic in self._filter_topic_word_overrides.keys():
+            normalized = str(topic).strip()
+            if normalized:
+                topics.append(normalized)
+        self.filter_topic_words_combo.blockSignals(True)
+        self.filter_topic_words_combo.clear()
+        self.filter_topic_words_combo.addItems(topics)
+        self.filter_topic_words_combo.blockSignals(False)
+        self._on_filter_topic_words_topic_changed()
 
-    def _on_filter_topic_changed(self, _index=None):
-        self._save_current_topic_override()
-        self._load_filter_topic_controls(self.filter_topic_combo.currentText())
-
-    def _load_filter_topic_controls(self, topic: str):
-        self._current_filter_topic = topic
-        if not topic:
-            self.filter_topic_enabled.setChecked(False)
-            self.filter_topic_min_overlap_spin.setValue(int(self.filter_min_overlap_spin.value()))
-            self.filter_topic_top_k_spin.setValue(int(self.filter_top_k_spin.value()))
-            self.filter_topic_require_incident.setChecked(bool(self.filter_require_incident.isChecked()))
+    def _on_filter_topic_words_topic_changed(self, _index=None):
+        if not hasattr(self, "filter_topic_words_list"):
             return
-        override = self._filter_topic_overrides.get(topic, {})
-        if not isinstance(override, dict):
-            override = {}
-        self.filter_topic_enabled.setChecked(bool(override.get("enabled", False)))
-        self.filter_topic_min_overlap_spin.setValue(
-            int(override.get("min_query_token_overlap", self.filter_min_overlap_spin.value()))
-        )
-        self.filter_topic_top_k_spin.setValue(
-            int(override.get("top_k_per_term", self.filter_top_k_spin.value()))
-        )
-        self.filter_topic_require_incident.setChecked(
-            bool(override.get("require_incident_signal", self.filter_require_incident.isChecked()))
-        )
-        self.filter_topic_note.setText(
-            "Non-English articles for this topic still bypass pre-LLM filtering."
-        )
-
-    def _save_current_topic_override(self):
-        topic = self._current_filter_topic
+        self.filter_topic_words_list.clear()
+        topic = self.filter_topic_words_combo.currentText().strip() if hasattr(self, "filter_topic_words_combo") else ""
         if not topic:
             return
-        if not self.filter_topic_enabled.isChecked():
-            self._filter_topic_overrides.pop(topic, None)
+        words = self._filter_topic_word_overrides.get(topic, [])
+        for word in words:
+            self.filter_topic_words_list.addItem(word)
+
+    def _add_filter_topic_word(self):
+        topic = self.filter_topic_words_combo.currentText().strip() if hasattr(self, "filter_topic_words_combo") else ""
+        if not topic:
+            QMessageBox.warning(self, "No Topic", "Add at least one search term first.")
             return
-        self._filter_topic_overrides[topic] = {
-            "enabled": True,
-            "min_query_token_overlap": int(self.filter_topic_min_overlap_spin.value()),
-            "top_k_per_term": int(self.filter_topic_top_k_spin.value()),
-            "require_incident_signal": bool(self.filter_topic_require_incident.isChecked()),
-        }
+        word, ok = QInputDialog.getText(self, "Add Filter Word", f"Add word or phrase for '{topic}':")
+        if not ok:
+            return
+        normalized = str(word).strip().lower()
+        if not normalized:
+            return
+        current = self._filter_topic_word_overrides.setdefault(topic, [])
+        if normalized in current:
+            QMessageBox.information(self, "Already Exists", "That word already exists for this topic.")
+            return
+        current.append(normalized)
+        self._on_filter_topic_words_topic_changed()
+
+    def _remove_filter_topic_word(self):
+        topic = self.filter_topic_words_combo.currentText().strip() if hasattr(self, "filter_topic_words_combo") else ""
+        if not topic:
+            return
+        selected = self.filter_topic_words_list.currentItem() if hasattr(self, "filter_topic_words_list") else None
+        if selected is None:
+            return
+        word = selected.text().strip().lower()
+        words = self._filter_topic_word_overrides.get(topic, [])
+        self._filter_topic_word_overrides[topic] = [item for item in words if item != word]
+        self._on_filter_topic_words_topic_changed()
+
+    def _build_generated_topic_word_overrides(self, context_text: str) -> dict:
+        payload = self._generate_topic_words_with_openai(context_text)
+        topics = payload.get("topics", [])
+        if not isinstance(topics, list):
+            return {}
+        min_overlap_value = int(self.config_manager.get("PRELLM_MIN_QUERY_TOKEN_OVERLAP", 1))
+        require_incident_value = bool(self.config_manager.get("PRELLM_REQUIRE_INCIDENT_SIGNAL", False))
+        overrides = {}
+        for item in topics:
+            if not isinstance(item, dict):
+                continue
+            topic_name = str(item.get("topic", "")).strip()
+            if not topic_name:
+                continue
+            keywords = item.get("keywords", [])
+            if not isinstance(keywords, list):
+                keywords = []
+            normalized_keywords = []
+            seen = set()
+            for word in keywords:
+                normalized = str(word).strip().lower()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                normalized_keywords.append(normalized)
+            overrides[topic_name] = {
+                "enabled": True,
+                "min_query_token_overlap": min_overlap_value,
+                "require_incident_signal": require_incident_value,
+                "keywords": normalized_keywords[:20],
+            }
+        return overrides
+
+    def _generate_topic_words_with_openai(self, context_text: str) -> dict:
+        cleaned_context = str(context_text or "").strip()
+        if not cleaned_context:
+            return {"topics": []}
+
+        prompt = (
+            "You are creating pre-filter topic controls for a news incident scraper.\n"
+            "From the instruction text below, infer the best topic buckets and strong filtering keywords.\n"
+            "Return strict JSON only in this shape:\n"
+            "{\"topics\":[{\"topic\":\"<short topic name>\",\"keywords\":[\"keyword1\",\"keyword2\"]}]}\n"
+            "Rules:\n"
+            "- 3 to 12 topics.\n"
+            "- Topic names must be short and clear.\n"
+            "- Each topic must have 5 to 20 keywords/phrases.\n"
+            "- Keywords should be practical for lexical matching in news text.\n"
+            "- Avoid generic stopwords.\n"
+            "- No markdown, no explanation.\n\n"
+            f"INSTRUCTIONS:\n{cleaned_context}"
+        )
+        client = get_client()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.2,
+            messages=[
+                {"role": "system", "content": "Return valid JSON only."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        content = (response.choices[0].message.content or "").strip()
+        if not content:
+            raise ValueError("OpenAI returned empty content for topic generation.")
+
+        if content.startswith("```"):
+            content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+            content = re.sub(r"\n?```$", "", content).strip()
+
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            parsed = {"topics": parsed}
+        if not isinstance(parsed, dict):
+            raise ValueError("OpenAI topic generation did not return a JSON object.")
+        return parsed
 
     def _save_filtering_settings(self):
-        self._save_current_topic_override()
         min_chars = int(self.filter_min_chars_spin.value())
         max_chars = int(self.filter_max_chars_spin.value())
         if min_chars > max_chars:
@@ -1004,17 +1189,42 @@ class NewsScraperGUI(QMainWindow):
             "PRELLM_MIN_CONTENT_CHARS": min_chars,
             "PRELLM_MAX_CONTENT_CHARS": max_chars,
             "PRELLM_MIN_QUERY_TOKEN_OVERLAP": int(self.filter_min_overlap_spin.value()),
-            "PRELLM_TOP_K_PER_TERM": int(self.filter_top_k_spin.value()),
             "PRELLM_REQUIRE_INCIDENT_SIGNAL": bool(self.filter_require_incident.isChecked()),
             "PRELLM_DEDUP_BY_URL": bool(self.filter_dedup_url.isChecked()),
             "PRELLM_DEDUP_BY_TITLE": bool(self.filter_dedup_title.isChecked()),
-            "PRELLM_TOPIC_OVERRIDES": self._filter_topic_overrides,
+            "PRELLM_TOPIC_OVERRIDES": self._overrides_with_keywords(),
         }
+        merged = dict(self.config_manager.config)
+        merged.update(updates)
         try:
-            self.config_manager.save_config(updates)
+            self.config_manager.save_config(merged)
             QMessageBox.information(self, "Saved", "Filtering controls saved successfully.")
         except Exception as exc:
             QMessageBox.critical(self, "Error", f"Failed to save filtering controls: {exc}")
+
+    def _overrides_with_keywords(self) -> dict:
+        overrides = {}
+        min_overlap_value = int(self.filter_min_overlap_spin.value()) if hasattr(self, "filter_min_overlap_spin") else 1
+        require_incident_value = bool(self.filter_require_incident.isChecked()) if hasattr(self, "filter_require_incident") else False
+        for topic, words in (self._filter_topic_word_overrides or {}).items():
+            topic_name = str(topic).strip()
+            if not topic_name:
+                continue
+            normalized_words = []
+            seen = set()
+            for word in words:
+                normalized = str(word).strip().lower()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                normalized_words.append(normalized)
+            overrides[topic_name] = {
+                "enabled": True,
+                "min_query_token_overlap": min_overlap_value,
+                "require_incident_signal": require_incident_value,
+                "keywords": normalized_words,
+            }
+        return overrides
 
     def _update_filtering_insights(self):
         try:
@@ -1103,18 +1313,34 @@ class NewsScraperGUI(QMainWindow):
                 "QUERY_EXPANSION_ENABLED": True,
                 "QUERY_EXPANSION_USE_AI": True,
                 "QUERY_EXPANSION_LANGUAGES": self._selected_languages_csv(),
-                "REGION_OVERRIDE_ENABLED": self.region_override_enabled.isChecked(),
-                "QUERY_EXPANSION_REGIONS": self._selected_regions_csv(),
-                "AUTO_REGION_MAPPING_ENABLED": self.auto_region_mapping.isChecked(),
                 "CHATGPT_CONTEXT_MESSAGE": {
                     "role": "system",
                     "content": self.context_message.toPlainText()
                 },
             }
             config_updates.update(self.date_range_widget.get_config_values())
+            try:
+                generated_overrides = self._build_generated_topic_word_overrides(
+                    self.context_message.toPlainText()
+                )
+            except Exception as exc:
+                logger.warning("Could not auto-generate pre-filter topics from OpenAI: %s", exc)
+                current_overrides = self.config_manager.get("PRELLM_TOPIC_OVERRIDES", {})
+                generated_overrides = current_overrides if isinstance(current_overrides, dict) else {}
+                QMessageBox.warning(
+                    self,
+                    "Topic Generation Warning",
+                    "Configuration was saved, but topic-word generation failed. "
+                    "Existing topic words were kept.",
+                )
+            config_updates["PRELLM_TOPIC_OVERRIDES"] = generated_overrides
 
             # Save all at once to trigger encrypted storage
-            self.config_manager.save_config(config_updates)
+            merged = dict(self.config_manager.config)
+            merged.update(config_updates)
+            self.config_manager.save_config(merged)
+            self._filter_topic_word_overrides = self._topic_word_overrides_from_config()
+            self._refresh_filter_topic_words_topics()
 
             if self.config_manager.validate():
                 self.processor = None  # Clear old processor
@@ -1407,9 +1633,9 @@ class NewsScraperGUI(QMainWindow):
 
         filter_layout.addWidget(QLabel("Search:"))
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search in titles...")
+        self.search_box.setPlaceholderText("Search titles, URL, keywords, description…")
         self.search_box.textChanged.connect(self._filter_results)
-        self.search_box.setToolTip("Enter text to filter article titles")
+        self.search_box.setToolTip("Filter by text in title, URL, keywords, description, snippet, source, UUID, language")
         filter_layout.addWidget(self.search_box)
 
         filter_layout.addWidget(QLabel("Min. Relevance:"))
@@ -1421,15 +1647,23 @@ class NewsScraperGUI(QMainWindow):
 
         layout.addWidget(filter_group)
 
-        # Results tree with context menu
-        self.results_tree = QTreeWidget()
-        self.results_tree.setHeaderLabels(["Title", "Relevance", "URL"])
-        self.results_tree.setColumnWidth(0, 400)
-        self.results_tree.setColumnWidth(1, 100)
-        self.results_tree.setColumnWidth(2, 300)
-        self.results_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.results_tree.customContextMenuRequested.connect(self._show_context_menu)
-        layout.addWidget(self.results_tree)
+        # Results table (all API-style fields; horizontal scroll for narrow windows)
+        self.results_table = QTableWidget(0, len(RESULTS_TABLE_COLUMNS))
+        self.results_table.setHorizontalHeaderLabels([h for _, h, _ in RESULTS_TABLE_COLUMNS])
+        hdr = self.results_table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(False)
+        for col, (_, _, w) in enumerate(RESULTS_TABLE_COLUMNS):
+            self.results_table.setColumnWidth(col, w)
+        self.results_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.results_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.results_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setWordWrap(False)
+        self.results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.results_table.customContextMenuRequested.connect(self._show_results_context_menu)
+        self.results_table.setToolTip("Right-click a row to copy or open the article URL")
+        layout.addWidget(self.results_table)
 
         # Store original results for filtering
         self.all_results = []
@@ -1459,23 +1693,13 @@ class NewsScraperGUI(QMainWindow):
                 self.language_checkboxes["en"].setChecked(True)
         return ",".join(selected)
 
-    def _selected_regions_csv(self) -> str:
-        if not self.region_override_enabled.isChecked():
-            return ""
-        selected = [code for code, checkbox in self.region_checkboxes.items() if checkbox.isChecked()]
-        return ",".join(selected)
-
-    def _toggle_region_override_controls(self, enabled: bool):
-        for checkbox in self.region_checkboxes.values():
-            checkbox.setEnabled(enabled)
-
     def _refresh_search_terms(self):
         self.terms_list.clear()
         terms = self.search_manager.get_search_terms()
         for term in terms:
             self.terms_list.addItem(term['term'])
-        if hasattr(self, "filter_topic_combo"):
-            self._refresh_filter_topic_selector()
+        if hasattr(self, "filter_topic_words_combo"):
+            self._refresh_filter_topic_words_topics()
 
     def _add_search_term(self):
         term, ok = QInputDialog.getText(self, "Add Search Term", "Enter new search term:")
@@ -1899,41 +2123,179 @@ class NewsScraperGUI(QMainWindow):
             cursor.removeSelectedText()
             cursor.deleteChar()
 
-    def _show_context_menu(self, position):
-        item = self.results_tree.itemAt(position)
-        if (item):
-            menu = QMenu()
-            copy_action = QAction("Copy URL", self)
-            copy_action.triggered.connect(lambda: self._copy_url(item))
-            menu.addAction(copy_action)
-            
-            open_action = QAction("Open in Browser", self)
-            open_action.triggered.connect(lambda: self._open_url(item))
-            menu.addAction(open_action)
-            
-            menu.exec(self.results_tree.viewport().mapToGlobal(position))
+    def _results_url_column_index(self) -> int:
+        for i, (key, _, _) in enumerate(RESULTS_TABLE_COLUMNS):
+            if key == "url":
+                return i
+        return 5
 
-    def _copy_url(self, item):
-        url = item.text(2)  # URL is in the third column
+    def _enrich_result_row(self, row: dict) -> dict:
+        """Normalize DB / pipeline dicts for display and export."""
+        if not isinstance(row, dict):
+            return {}
+        out = dict(row)
+        out.setdefault("api_uuid", str(out.get("api_uuid") or out.get("uuid") or "").strip())
+        out.setdefault("description", str(out.get("description") or "").strip())
+        out.setdefault("keywords", str(out.get("keywords") or "").strip())
+        out.setdefault("snippet", str(out.get("snippet") or "").strip())
+        out.setdefault("language", str(out.get("language") or "").strip())
+        img = out.get("url_to_image") or out.get("image_url") or ""
+        out["url_to_image"] = str(img or "").strip()
+        out.setdefault("published_at", str(out.get("published_at") or "").strip())
+        src = out.get("source", "") or ""
+        if isinstance(src, dict):
+            src = extract_source_name(src, default="")
+        out["source"] = str(src or "").strip()
+        out.setdefault("title", str(out.get("title") or "").strip())
+        out.setdefault("url", str(out.get("url") or "").strip())
+        out.setdefault("content", str(out.get("content") or "").strip())
+        if not str(out.get("api_categories") or "").strip():
+            cat = out.get("categories")
+            if isinstance(cat, list):
+                out["api_categories"] = json.dumps(cat, ensure_ascii=False)
+            elif isinstance(cat, str) and cat.strip():
+                out["api_categories"] = cat.strip()
+            else:
+                out["api_categories"] = "[]"
+        return out
+
+    def _format_categories_cell(self, row: dict) -> str:
+        raw = row.get("api_categories") or row.get("categories") or "[]"
+        if isinstance(raw, list):
+            parts = [str(x).strip() for x in raw if str(x).strip()]
+            return ", ".join(parts)
+        s = str(raw).strip()
+        if not s:
+            return ""
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return ", ".join(str(x).strip() for x in parsed if str(x).strip())
+        except json.JSONDecodeError:
+            pass
+        return s
+
+    def _result_cell_text(self, row: dict, column_key: str) -> str:
+        if column_key == "categories_display":
+            return self._format_categories_cell(row)
+        if column_key == "relevance_score":
+            rs = row.get("relevance_score")
+            try:
+                return f"{float(rs):.6f}".rstrip("0").rstrip(".")
+            except (TypeError, ValueError):
+                return str(rs) if rs is not None else ""
+        val = row.get(column_key, "")
+        return str(val) if val is not None else ""
+
+    def _result_row_search_blob(self, row: dict) -> str:
+        parts = [
+            row.get("title", ""),
+            row.get("description", ""),
+            row.get("keywords", ""),
+            row.get("snippet", ""),
+            row.get("url", ""),
+            row.get("source", ""),
+            row.get("api_uuid", ""),
+            row.get("language", ""),
+            self._format_categories_cell(row),
+        ]
+        return " ".join(str(p) for p in parts).lower()
+
+    def _result_to_api_export_dict(self, row: dict) -> dict:
+        """Shape one row like TheNewsAPI article objects (+ our relevance_score)."""
+        r = self._enrich_result_row(row)
+        raw_cat = r.get("api_categories") or r.get("categories") or "[]"
+        categories: list = []
+        if isinstance(raw_cat, list):
+            categories = [str(x) for x in raw_cat]
+        else:
+            try:
+                parsed = json.loads(str(raw_cat).strip() or "[]")
+                if isinstance(parsed, list):
+                    categories = [str(x) for x in parsed]
+                else:
+                    categories = [str(parsed)]
+            except json.JSONDecodeError:
+                s = str(raw_cat).strip()
+                categories = [s] if s else []
+        rel = r.get("relevance_score")
+        try:
+            relevance_score = float(rel) if rel is not None and rel != "" else None
+        except (TypeError, ValueError):
+            relevance_score = rel
+        return {
+            "uuid": r.get("api_uuid", "") or "",
+            "title": r.get("title", "") or "",
+            "description": r.get("description", "") or "",
+            "keywords": r.get("keywords", "") or "",
+            "snippet": r.get("snippet", "") or "",
+            "url": r.get("url", "") or "",
+            "image_url": r.get("url_to_image", "") or "",
+            "language": r.get("language", "") or "",
+            "published_at": r.get("published_at", "") or "",
+            "source": r.get("source", "") or "",
+            "categories": categories,
+            "relevance_score": relevance_score,
+        }
+
+    def _show_results_context_menu(self, position):
+        idx = self.results_table.indexAt(position)
+        if not idx.isValid():
+            return
+        row_i = idx.row()
+        item0 = self.results_table.item(row_i, 0)
+        if not item0:
+            return
+        menu = QMenu()
+        copy_action = QAction("Copy URL", self)
+        copy_action.triggered.connect(lambda: self._copy_result_url_for_row(row_i))
+        menu.addAction(copy_action)
+        open_action = QAction("Open in Browser", self)
+        open_action.triggered.connect(lambda: self._open_result_url_for_row(row_i))
+        menu.addAction(open_action)
+        menu.exec(self.results_table.viewport().mapToGlobal(position))
+
+    def _result_payload_for_row(self, row_index: int) -> dict:
+        item0 = self.results_table.item(row_index, 0)
+        if not item0:
+            return {}
+        data = item0.data(Qt.ItemDataRole.UserRole)
+        return data if isinstance(data, dict) else {}
+
+    def _copy_result_url_for_row(self, row_index: int):
+        col = self._results_url_column_index()
+        item = self.results_table.item(row_index, col)
+        url = item.text() if item else ""
+        if not url:
+            url = self._result_payload_for_row(row_index).get("url", "")
         QApplication.clipboard().setText(url)
         self.statusBar().showMessage("URL copied to clipboard", 3000)
 
-    def _open_url(self, item):
+    def _open_result_url_for_row(self, row_index: int):
         import webbrowser
-        url = item.text(2)
-        webbrowser.open(url)
+        col = self._results_url_column_index()
+        item = self.results_table.item(row_index, col)
+        url = item.text() if item else ""
+        if not url:
+            url = self._result_payload_for_row(row_index).get("url", "")
+        if url:
+            webbrowser.open(url)
 
-    def _add_result_item(self, result):
-        """Add a single result item to the results tree"""
+    def _add_result_row(self, result: dict):
+        """Append one enriched row to the results table."""
         try:
-            item = QTreeWidgetItem([
-                result.get('title', 'No title'),
-                f"{result.get('relevance_score', 0):.2f}",
-                result.get('url', 'No URL')
-            ])
-            self.results_tree.addTopLevelItem(item)
+            full = self._enrich_result_row(result)
+            row_i = self.results_table.rowCount()
+            self.results_table.insertRow(row_i)
+            for col, (key, _, _) in enumerate(RESULTS_TABLE_COLUMNS):
+                text = self._result_cell_text(full, key)
+                cell = QTableWidgetItem(text)
+                cell.setToolTip(text if len(text) < 2000 else text[:1997] + "…")
+                if col == 0:
+                    cell.setData(Qt.ItemDataRole.UserRole, full)
+                self.results_table.setItem(row_i, col, cell)
         except Exception as e:
-            logger.error(f"Error adding result to tree: {e}")
+            logger.error("Error adding result row: %s", e)
             
     def _filter_results(self):
         search_text = self.search_box.text().lower()
@@ -1946,13 +2308,16 @@ class NewsScraperGUI(QMainWindow):
             4: 0.9     # Very High
         }.get(relevance_idx, 0.0)
 
-        self.results_tree.clear()
+        self.results_table.setRowCount(0)
         for result in self.all_results:
-            title = result.get('title', '').lower()
-            relevance = result.get('relevance_score', 0)
-            
-            if (search_text in title and relevance >= min_relevance):
-                self._add_result_item(result)
+            relevance = result.get("relevance_score", 0)
+            try:
+                rel_f = float(relevance)
+            except (TypeError, ValueError):
+                rel_f = 0.0
+            blob = self._result_row_search_blob(self._enrich_result_row(result))
+            if search_text in blob and rel_f >= min_relevance:
+                self._add_result_row(result)
 
     def _export_results(self) -> bool:
         """Export the current results to a file."""
@@ -1974,10 +2339,17 @@ class NewsScraperGUI(QMainWindow):
         search_text = self.search_box.text().lower()
         
         # Filter results based on current criteria
+        def _rel_ge(row: dict, minimum: float) -> bool:
+            try:
+                return float(row.get("relevance_score", 0)) >= minimum
+            except (TypeError, ValueError):
+                return False
+
         filtered_results = [
-            result for result in self.all_results
-            if (search_text in result.get('title', '').lower() and 
-                result.get('relevance_score', 0) >= min_relevance)
+            result
+            for result in self.all_results
+            if _rel_ge(result, min_relevance)
+            and search_text in self._result_row_search_blob(self._enrich_result_row(result))
         ]
         
         if not filtered_results:
@@ -2011,22 +2383,45 @@ class NewsScraperGUI(QMainWindow):
             return False
 
     def _export_to_csv(self, file_path, results):
-        """Export results to CSV format"""
+        """Export results to CSV (API fields plus a short summary column)."""
         import csv
-        
-        with open(file_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=['title', 'relevance_score', 'url', 'event | location | actor']
-            )
+
+        base_fields = [
+            "uuid",
+            "title",
+            "description",
+            "keywords",
+            "snippet",
+            "url",
+            "image_url",
+            "language",
+            "published_at",
+            "source",
+            "categories",
+            "relevance_score",
+        ]
+        fieldnames = base_fields + ["event | location | actor"]
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             for result in results:
-                writer.writerow({
-                    'title': result.get('title', ''),
-                    'relevance_score': f"{result.get('relevance_score', 0):.2f}",
-                    'url': result.get('url', ''),
-                    'event | location | actor': self._build_export_summary(result),
-                })
+                api = self._result_to_api_export_dict(result)
+                row = {
+                    "uuid": api["uuid"],
+                    "title": api["title"],
+                    "description": api["description"],
+                    "keywords": api["keywords"],
+                    "snippet": api["snippet"],
+                    "url": api["url"],
+                    "image_url": api["image_url"],
+                    "language": api["language"],
+                    "published_at": api["published_at"],
+                    "source": api["source"],
+                    "categories": ", ".join(api["categories"]) if api["categories"] else "",
+                    "relevance_score": api["relevance_score"],
+                    "event | location | actor": self._build_export_summary(result),
+                }
+                writer.writerow(row)
 
     def _build_export_summary(self, result):
         """Build a compact 4-7 word keyphrase summary for export."""
@@ -2111,20 +2506,31 @@ class NewsScraperGUI(QMainWindow):
         return "pharma incident"
 
     def _export_to_json(self, file_path, results):
-        """Export results to JSON format"""
+        """Export as a JSON array of API-shaped article objects."""
         import json
-        
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+
+        payload = [self._result_to_api_export_dict(r) for r in results]
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
 
     def _export_to_txt(self, file_path, results):
-        """Export results to plain text format"""
-        with open(file_path, 'w', encoding='utf-8') as f:
+        """Export human-readable text with all API-style fields per article."""
+        with open(file_path, "w", encoding="utf-8") as f:
             for result in results:
-                f.write(f"Title: {result.get('title', '')}\n")
-                f.write(f"Relevance: {result.get('relevance_score', 0):.2f}\n")
-                f.write(f"URL: {result.get('url', '')}\n")
-                f.write(f"Summary: {self._build_export_summary(result)}\n")
+                api = self._result_to_api_export_dict(result)
+                f.write(f"uuid: {api['uuid']}\n")
+                f.write(f"title: {api['title']}\n")
+                f.write(f"description: {api['description']}\n")
+                f.write(f"keywords: {api['keywords']}\n")
+                f.write(f"snippet: {api['snippet']}\n")
+                f.write(f"url: {api['url']}\n")
+                f.write(f"image_url: {api['image_url']}\n")
+                f.write(f"language: {api['language']}\n")
+                f.write(f"published_at: {api['published_at']}\n")
+                f.write(f"source: {api['source']}\n")
+                f.write(f"categories: {', '.join(api['categories'])}\n")
+                f.write(f"relevance_score: {api['relevance_score']}\n")
+                f.write(f"summary: {self._build_export_summary(result)}\n")
                 f.write("-" * 80 + "\n")
 
     def _update_results(self, results):
@@ -2138,9 +2544,9 @@ class NewsScraperGUI(QMainWindow):
             self.statusBar().showMessage("No valid results found")
             return
 
-        self.results_tree.clear()
+        self.results_table.setRowCount(0)
         for result in valid_results:
-            self._add_result_item(result)
+            self._add_result_row(result)
 
         self.statusBar().showMessage(f"Loaded {len(valid_results)} results")
 
@@ -2150,20 +2556,34 @@ class NewsScraperGUI(QMainWindow):
             rows = self.db_manager.execute_query(
                 """
                 SELECT
-                    title,
-                    relevance_score,
-                    url,
-                    content,
-                    explanation,
-                    event,
-                    who_entities,
-                    where_location,
-                    impact,
-                    urgency,
-                    why_it_matters,
-                    incident_sentence
-                FROM relevant_articles
-                ORDER BY id DESC
+                    r.title AS title,
+                    r.relevance_score AS relevance_score,
+                    r.url AS url,
+                    r.content AS content,
+                    r.url_to_image AS url_to_image,
+                    r.published_at AS published_at,
+                    r.source AS source,
+                    r.explanation AS explanation,
+                    r.event AS event,
+                    r.who_entities AS who_entities,
+                    r.where_location AS where_location,
+                    r.impact AS impact,
+                    r.urgency AS urgency,
+                    r.why_it_matters AS why_it_matters,
+                    r.incident_sentence AS incident_sentence,
+                    COALESCE(NULLIF(TRIM(r.api_uuid), ''), NULLIF(TRIM(rw.api_uuid), ''), '') AS api_uuid,
+                    COALESCE(NULLIF(TRIM(r.description), ''), NULLIF(TRIM(rw.description), ''), '') AS description,
+                    COALESCE(NULLIF(TRIM(r.snippet), ''), NULLIF(TRIM(rw.snippet), ''), '') AS snippet,
+                    COALESCE(NULLIF(TRIM(r.keywords), ''), NULLIF(TRIM(rw.keywords), ''), '') AS keywords,
+                    COALESCE(NULLIF(TRIM(r.language), ''), NULLIF(TRIM(rw.language), ''), '') AS language,
+                    COALESCE(
+                        NULLIF(TRIM(r.api_categories), ''),
+                        NULLIF(TRIM(rw.categories), ''),
+                        '[]'
+                    ) AS api_categories
+                FROM relevant_articles r
+                LEFT JOIN raw_articles rw ON r.raw_article_id = rw.id
+                ORDER BY r.id DESC
                 """
             ) or []
             self._update_results(rows)

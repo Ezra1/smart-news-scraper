@@ -86,16 +86,11 @@ DEFAULT_CONFIG = {
     "PRELLM_TOPIC_OVERRIDES": {},
     "OPENAI_REQUESTS_PER_MINUTE": 60,
     "RELEVANCE_THRESHOLD": 0.7,
-    "HIGH_RECALL_MODE": False,
-    "HIGH_RECALL_RELEVANCE_THRESHOLD": 0.6,
     "QUERY_EXPANSION_ENABLED": True,
     "QUERY_EXPANSION_USE_AI": True,
     "QUERY_EXPANSION_VARIANTS_PER_TERM": 3,
     "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 120,
     "QUERY_EXPANSION_LANGUAGES": "en,es,fr,pt,ar,ru,zh,hi",
-    "REGION_OVERRIDE_ENABLED": False,
-    "QUERY_EXPANSION_REGIONS": "",
-    "AUTO_REGION_MAPPING_ENABLED": True,
     "REQUEST_BUDGET_MODE": "aggressive",
     "REQUEST_BUDGET_PER_RUN": 200,
     "DATE_RANGE_MODE": "preset",
@@ -290,7 +285,6 @@ class ConfigManager:
             "QUERY_EXPANSION_VARIANTS_PER_TERM": int,
             "QUERY_EXPANSION_MAX_TOTAL_QUERIES": int,
             "REQUEST_BUDGET_PER_RUN": int,
-            "HIGH_RECALL_RELEVANCE_THRESHOLD": float,
         }
         bool_keys = {
             "NEWS_API_ENABLE_URL_FALLBACK",
@@ -301,11 +295,8 @@ class ConfigManager:
             "PRELLM_STAGE3_ENABLED",
             "PRELLM_LOG_DROPS",
             "PRELLM_ENABLE_LLM_GUARDRAIL",
-            "HIGH_RECALL_MODE",
             "QUERY_EXPANSION_ENABLED",
             "QUERY_EXPANSION_USE_AI",
-            "REGION_OVERRIDE_ENABLED",
-            "AUTO_REGION_MAPPING_ENABLED",
         }
         
         env_config = {}
@@ -573,11 +564,6 @@ class ConfigManager:
                 return False
             if int(self.config.get("REQUEST_BUDGET_PER_RUN", 0)) <= 0:
                 logger.error("REQUEST_BUDGET_PER_RUN must be positive")
-                return False
-
-            high_recall_threshold = float(self.config.get("HIGH_RECALL_RELEVANCE_THRESHOLD", 0.6))
-            if not 0 <= high_recall_threshold <= 1:
-                logger.error("HIGH_RECALL_RELEVANCE_THRESHOLD must be between 0 and 1")
                 return False
 
             # Batch size validation

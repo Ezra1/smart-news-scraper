@@ -8,17 +8,6 @@ from src.request_budget import QueryPlanItem
 
 logger = setup_logging(__name__)
 
-DEFAULT_LANGUAGE_REGION_MAP: Dict[str, List[str]] = {
-    "en": ["us", "gb", "ca", "au"],
-    "es": ["es", "mx", "ar", "co"],
-    "fr": ["fr", "be", "ca"],
-    "pt": ["pt", "br"],
-    "ar": ["ae", "sa", "eg"],
-    "ru": ["ru", "kz"],
-    "zh": ["cn", "hk", "sg", "tw"],
-    "hi": ["in"],
-}
-
 FALLBACK_TRANSLATIONS: Dict[str, Dict[str, List[str]]] = {
     "counterfeit medicine": {
         "en": ["counterfeit medicine", "fake medicine", "falsified medicine"],
@@ -29,6 +18,9 @@ FALLBACK_TRANSLATIONS: Dict[str, Dict[str, List[str]]] = {
         "ru": ["poddelnye lekarstva", "kontrafaktnye lekarstva", "falshivye medikamenty"],
         "zh": ["假药", "伪劣药品", "药品造假"],
         "hi": ["nakli davai", "jhooti davai", "dawai milawat"],
+        "tr": ["sahte ilac", "taklit ilac", "falsifiye ilac"],
+        "id": ["obat palsu", "obat tiruan", "pemalsuan obat"],
+        "vi": ["thuoc gia", "thuoc nhai", "thuoc bi lam gia"],
     },
     "seized medicine": {
         "en": ["seized medicine", "medicine seizure", "drug seizure"],
@@ -39,6 +31,9 @@ FALLBACK_TRANSLATIONS: Dict[str, Dict[str, List[str]]] = {
         "ru": ["izyatye lekarstva", "konfiskaciya lekarstv", "zaderzhanie lekarstv"],
         "zh": ["查获药品", "药品缉获", "查扣药品"],
         "hi": ["jabt davai", "dawai jabti", "zabt ki gayi davai"],
+        "tr": ["ele gecirilen ilac", "ilac operasyonu", "ilaclara el koyma"],
+        "id": ["obat disita", "penyitaan obat", "obat berhasil disita"],
+        "vi": ["thuoc bi thu giu", "thu giu thuoc", "thuoc bi tich thu"],
     },
     "smuggled medicine": {
         "en": ["smuggled medicine", "medicine trafficking", "illicit medicine trade"],
@@ -49,6 +44,9 @@ FALLBACK_TRANSLATIONS: Dict[str, Dict[str, List[str]]] = {
         "ru": ["kontrabandnye lekarstva", "trafik lekarstv", "nelegalnaya torgovlya lekarstvami"],
         "zh": ["走私药品", "药品走私", "非法药品贸易"],
         "hi": ["smuggle ki hui davai", "dawai taskari", "avaidh dava vyapar"],
+        "tr": ["kacak ilac", "ilac kacakciligi", "yasadisi ilac ticareti"],
+        "id": ["obat selundupan", "penyelundupan obat", "perdagangan obat ilegal"],
+        "vi": ["thuoc buôn lau", "buôn lau thuoc", "buôn ban thuoc bat hop phap"],
     },
 }
 
@@ -60,9 +58,6 @@ class ExpansionSettings:
     languages: List[str]
     variants_per_term: int
     max_total_queries: int
-    auto_region_mapping: bool
-    region_override_enabled: bool
-    override_regions: List[str]
 
 
 def _parse_csv_values(raw: str) -> List[str]:
@@ -78,18 +73,7 @@ def build_settings(config_manager) -> ExpansionSettings:
         languages=_parse_csv_values(config_manager.get("QUERY_EXPANSION_LANGUAGES", "en")),
         variants_per_term=max(1, int(config_manager.get("QUERY_EXPANSION_VARIANTS_PER_TERM", 3))),
         max_total_queries=max(1, int(config_manager.get("QUERY_EXPANSION_MAX_TOTAL_QUERIES", 120))),
-        auto_region_mapping=bool(config_manager.get("AUTO_REGION_MAPPING_ENABLED", True)),
-        region_override_enabled=bool(config_manager.get("REGION_OVERRIDE_ENABLED", False)),
-        override_regions=_parse_csv_values(config_manager.get("QUERY_EXPANSION_REGIONS", "")),
     )
-
-
-def _regions_for_language(language: str, settings: ExpansionSettings) -> List[str]:
-    if settings.region_override_enabled and settings.override_regions:
-        return settings.override_regions
-    if not settings.auto_region_mapping:
-        return []
-    return DEFAULT_LANGUAGE_REGION_MAP.get(language, [])
 
 
 def _expand_with_fallback(term: str, language: str, variants_per_term: int) -> List[str]:
@@ -175,7 +159,6 @@ def expand_terms_to_queries(
                         term=query,
                         root_term=root_term,
                         language=language,
-                        regions=_regions_for_language(language, settings),
                         priority=priority,
                     )
                 )

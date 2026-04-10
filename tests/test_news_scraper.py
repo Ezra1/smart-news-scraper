@@ -125,6 +125,17 @@ def test_fetch_for_term_flattens_category_payload(monkeypatch, scraper):
     assert sessions[0].last_params["language"] == "en"
 
 
+def test_build_articles_payload_sets_language_from_query_spec(scraper):
+    payload = scraper._build_articles_payload(
+        "x",
+        1,
+        {},
+        query_spec={"language": "de"},
+    )
+    assert payload["language"] == "de"
+    assert "locale" not in payload
+
+
 def test_build_search_query_for_single_term(scraper):
     query = scraper._build_search_query("semaglutide")
     assert query == "semaglutide"

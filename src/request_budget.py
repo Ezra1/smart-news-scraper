@@ -7,7 +7,6 @@ class QueryPlanItem:
     term: str
     root_term: str
     language: str
-    regions: List[str]
     priority: int
 
 

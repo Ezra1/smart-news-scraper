@@ -15,6 +15,34 @@ from src.logger_config import setup_logging
 from src.utils.article_normalization import extract_source_name
 logger = setup_logging(__name__)
 
+
+def _keywords_to_stored_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(x).strip() for x in value if str(x).strip())
+    return str(value).strip()
+
+
+def _categories_to_stored_json(value: Any) -> str:
+    if value is None:
+        return "[]"
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return "[]"
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return json.dumps(parsed, ensure_ascii=False)
+            return json.dumps([str(parsed)], ensure_ascii=False)
+        except json.JSONDecodeError:
+            return json.dumps([s], ensure_ascii=False)
+    return json.dumps([str(value)], ensure_ascii=False)
+
+
 class DatabaseManager:
     """Manages SQLite database operations with enhanced connection management"""
     _instance = None
@@ -286,6 +314,11 @@ class DatabaseManager:
                 "full_text": "TEXT",
                 "body_source": "TEXT",
                 "url_fallback_status": "TEXT",
+                "api_uuid": "TEXT",
+                "description": "TEXT",
+                "snippet": "TEXT",
+                "keywords": "TEXT",
+                "language": "TEXT",
             },
             "relevant_articles": {
                 "explanation": "TEXT",
@@ -297,6 +330,12 @@ class DatabaseManager:
                 "why_it_matters": "TEXT",
                 "incident_sentence": "TEXT",
                 "event_type_uri": "TEXT",
+                "api_uuid": "TEXT",
+                "description": "TEXT",
+                "snippet": "TEXT",
+                "keywords": "TEXT",
+                "language": "TEXT",
+                "api_categories": "TEXT",
             },
             "processing_results": {
                 "explanation": "TEXT",
@@ -392,6 +431,11 @@ class ArticleManager:
                 'full_text': article_data.get('full_text', ''),
                 'body_source': article_data.get('body_source', ''),
                 'url_fallback_status': article_data.get('url_fallback_status', ''),
+                'api_uuid': str(article_data.get('uuid') or article_data.get('api_uuid') or '').strip(),
+                'description': str(article_data.get('description') or '').strip(),
+                'snippet': str(article_data.get('snippet') or '').strip(),
+                'keywords': _keywords_to_stored_text(article_data.get('keywords')),
+                'language': str(article_data.get('language') or '').strip(),
             }
             
             # Process source field
@@ -413,8 +457,9 @@ class ArticleManager:
                 INSERT OR IGNORE INTO raw_articles
                 (title, content, source, url, url_to_image, published_at, search_term_id,
                  event_uri, concepts, categories, location, extracted_dates, incident_sentence,
-                 event_type_uri, source_rank_percentile, full_text, body_source, url_fallback_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 event_type_uri, source_rank_percentile, full_text, body_source, url_fallback_status,
+                 api_uuid, description, snippet, keywords, language)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             values = (
                 data['title'], data['content'], data['source'],
@@ -424,6 +469,8 @@ class ArticleManager:
                 data['incident_sentence'], data['event_type_uri'],
                 data['source_rank_percentile'], data['full_text'],
                 data['body_source'], data['url_fallback_status'],
+                data['api_uuid'], data['description'], data['snippet'],
+                data['keywords'], data['language'],
             )
             result = self.db_manager.execute_query(insert_query, values)
             if result is None:
@@ -465,8 +512,9 @@ class ArticleManager:
             INSERT OR IGNORE INTO raw_articles
             (title, content, source, url, url_to_image, published_at, search_term_id,
              event_uri, concepts, categories, location, extracted_dates, incident_sentence,
-             event_type_uri, source_rank_percentile, full_text, body_source, url_fallback_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             event_type_uri, source_rank_percentile, full_text, body_source, url_fallback_status,
+             api_uuid, description, snippet, keywords, language)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
 
         try:
@@ -546,6 +594,11 @@ class ArticleManager:
             'full_text': article_data.get('full_text', ''),
             'body_source': article_data.get('body_source', ''),
             'url_fallback_status': article_data.get('url_fallback_status', ''),
+            'api_uuid': str(article_data.get('uuid') or article_data.get('api_uuid') or '').strip(),
+            'description': str(article_data.get('description') or '').strip(),
+            'snippet': str(article_data.get('snippet') or '').strip(),
+            'keywords': _keywords_to_stored_text(article_data.get('keywords')),
+            'language': str(article_data.get('language') or '').strip(),
         }
 
         source = article_data.get('source', '') or article_data.get('source_name', '')
@@ -571,6 +624,8 @@ class ArticleManager:
             data['incident_sentence'], data['event_type_uri'],
             data['source_rank_percentile'], data['full_text'],
             data['body_source'], data['url_fallback_status'],
+            data['api_uuid'], data['description'], data['snippet'],
+            data['keywords'], data['language'],
         )
 
     def get_articles(self, article_id: Optional[int] = None) -> Optional[Dict]:
@@ -589,6 +644,27 @@ class ArticleManager:
         result = self.get_articles(article_id=article_id)
         logger.info(f"get_article_by_id result: {result}")
         return result
+
+    @staticmethod
+    def api_fields_from_article(article: Dict[str, Any]) -> Dict[str, str]:
+        """Extract TheNewsAPI-shaped metadata for relevant_articles persistence."""
+        if not isinstance(article, dict):
+            return {
+                "api_uuid": "",
+                "description": "",
+                "snippet": "",
+                "keywords": "",
+                "language": "",
+                "api_categories": "[]",
+            }
+        return {
+            "api_uuid": str(article.get("api_uuid") or article.get("uuid") or "").strip(),
+            "description": str(article.get("description") or "").strip(),
+            "snippet": str(article.get("snippet") or "").strip(),
+            "keywords": _keywords_to_stored_text(article.get("keywords")),
+            "language": str(article.get("language") or "").strip(),
+            "api_categories": _categories_to_stored_json(article.get("categories")),
+        }
 
     def insert_relevant_article(
         self,
@@ -609,6 +685,12 @@ class ArticleManager:
         why_it_matters: str = "",
         incident_sentence: str = "",
         event_type_uri: str = "",
+        api_uuid: str = "",
+        description: str = "",
+        snippet: str = "",
+        keywords: str = "",
+        language: str = "",
+        api_categories: str = "[]",
     ) -> bool:
         """
         Insert an article into the relevant_articles table with duplication checking.
@@ -650,11 +732,12 @@ class ArticleManager:
             logger.info(f"Inserting relevant article with raw_article_id: {raw_article_id}")
             query = """
                 INSERT INTO relevant_articles (
-                    raw_article_id, title, content, source, url, 
+                    raw_article_id, title, content, source, url,
                     url_to_image, published_at, relevance_score, explanation, event,
                     who_entities, where_location, impact, urgency, why_it_matters,
-                    incident_sentence, event_type_uri
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    incident_sentence, event_type_uri,
+                    api_uuid, description, snippet, keywords, language, api_categories
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             params = (
                 raw_article_id,
@@ -674,6 +757,12 @@ class ArticleManager:
                 why_it_matters,
                 incident_sentence,
                 event_type_uri,
+                api_uuid,
+                description,
+                snippet,
+                keywords,
+                language,
+                api_categories or "[]",
             )
             self.db_manager.execute_query(query, params)
             return True

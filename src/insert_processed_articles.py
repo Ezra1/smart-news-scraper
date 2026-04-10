@@ -78,6 +78,9 @@ class RelevanceFilter(ArticleAnalysisMixin):
                 if article_data:
                     self.relevant += 1
                     # Insert the article data into the relevant_articles table
+                    meta = ArticleManager.api_fields_from_article(
+                        article_data if isinstance(article_data, dict) else {}
+                    )
                     self.article_manager.insert_relevant_article(
                         raw_article_id=raw_article_id,
                         title=article_data.get("title", ""),
@@ -86,7 +89,8 @@ class RelevanceFilter(ArticleAnalysisMixin):
                         url=article_data.get("url", ""),
                         url_to_image=article_data.get("url_to_image"),
                         published_at=article_data.get("published_at", ""),
-                        relevance_score=relevance_score
+                        relevance_score=relevance_score,
+                        **meta,
                     )
                     logger.info(f"✅ Inserted relevant article with ID {raw_article_id} (score {relevance_score})")
                 else:

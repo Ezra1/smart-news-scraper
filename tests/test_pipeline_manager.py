@@ -17,7 +17,6 @@ class DummyConfigManager:
             "QUERY_EXPANSION_ENABLED": False,
             "REQUEST_BUDGET_MODE": "aggressive",
             "REQUEST_BUDGET_PER_RUN": 100,
-            "HIGH_RECALL_MODE": False,
             "RELEVANCE_THRESHOLD": 0.7,
         }
         return values.get(key, default)
@@ -92,7 +91,7 @@ class TestPipelineManagerCallbacks:
         status_cb.assert_has_calls(
             [
                 call("Starting article fetch...", False, False, False),
-                call("Processing term 1/1: term [lang=en, regions=us,gb,ca,au] (0 articles found)", False, False, False),
+                call("Processing term 1/1: term [lang=en] (0 articles found)", False, False, False),
                 call("Completed fetch: 1 articles from 1/1 terms", False, False, True),
             ],
             any_order=False,
@@ -132,7 +131,7 @@ class TestPipelineManagerCallbacks:
         status_cb.assert_has_calls(
             [
                 call("Starting article fetch...", False, False, False),
-                call("Processing term 1/1: term [lang=en, regions=us,gb,ca,au] (0 articles found)", False, False, False),
+                call("Processing term 1/1: term [lang=en] (0 articles found)", False, False, False),
                 call("Completed fetch: 1 articles from 1/1 terms", False, False, True),
             ],
             any_order=False,

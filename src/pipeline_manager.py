@@ -131,10 +131,6 @@ class PipelineManager:
                 raise ValueError("Configuration validation failed - check API keys")
 
             effective_threshold = float(self.config_manager.get("RELEVANCE_THRESHOLD", 0.7))
-            if bool(self.config_manager.get("HIGH_RECALL_MODE", False)):
-                effective_threshold = float(
-                    self.config_manager.get("HIGH_RECALL_RELEVANCE_THRESHOLD", effective_threshold)
-                )
 
             # Initialize processor with current config
             if not self.processor:
@@ -217,7 +213,7 @@ class PipelineManager:
             expanded_queries = expand_terms_to_queries(terms, expansion_settings)
             if not expanded_queries:
                 expanded_queries = [
-                    type("QueryItem", (), {"term": term, "root_term": term, "language": "", "regions": [], "priority": idx})
+                    type("QueryItem", (), {"term": term, "root_term": term, "language": "", "priority": idx})
                     for idx, term in enumerate(terms)
                 ]
 
@@ -241,7 +237,7 @@ class PipelineManager:
                 self.status_callback(
                     (
                         f"Processing term {current_term}/{total_queries}: "
-                        f"{query.term} [lang={query.language or 'default'}, regions={','.join(query.regions) or 'auto'}] "
+                        f"{query.term} [lang={query.language or 'default'}] "
                         f"({articles_fetched} articles found)"
                     ),
                     False,
@@ -256,7 +252,6 @@ class PipelineManager:
                         "term": query.term,
                         "root_term": query.root_term,
                         "language": query.language,
-                        "regions": query.regions,
                     }],
                     {query.root_term: search_term_map.get(query.root_term)},
                     date_params=date_params,
@@ -272,12 +267,11 @@ class PipelineManager:
                     articles_fetched += len(term_articles)  # Update counter
                     all_articles.extend(term_articles)
                     logger.info(
-                        "Found %s articles for query '%s' (root '%s', lang=%s, regions=%s) total=%s",
+                        "Found %s articles for query '%s' (root '%s', lang=%s) total=%s",
                         len(term_articles),
                         query.term,
                         query.root_term,
                         query.language,
-                        query.regions,
                         articles_fetched,
                     )
 
