@@ -60,6 +60,10 @@ CRIME_DESCRIPTOR_KEYWORDS = {
     "unauthorized",
     "diversion",
     "tampering",
+    "theft",
+    "stolen",
+    "robbery",
+    "burglary",
 }
 
 PHARMA_KEYWORDS = {

@@ -49,6 +49,20 @@ class DatabaseManager:
     _lock = threading.Lock()
     _connection_pool = Queue(maxsize=10)  # Connection pool
 
+    @classmethod
+    def _drain_and_reset_pool(cls) -> None:
+        """Close pooled connections and replace the queue (avoids deadlock on singleton reset)."""
+        while True:
+            try:
+                conn = cls._connection_pool.get(block=False)
+            except Empty:
+                break
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+        cls._connection_pool = Queue(maxsize=10)
+
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             with cls._lock:
@@ -60,6 +74,10 @@ class DatabaseManager:
     def __init__(self, db_path: str = "news_articles.db"):
         if self._initialized:
             return
+
+        # Tests (and rare re-init flows) may clear `_instance` while the class-level
+        # pool still holds connections; repopulating without draining blocks forever.
+        type(self)._drain_and_reset_pool()
 
         self.db_path = self._resolve_db_path(db_path)
         self._initialized = True

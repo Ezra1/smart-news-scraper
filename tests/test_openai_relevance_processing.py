@@ -23,6 +23,10 @@ class DummyArticleManager:
         self.processing_results = []
         self.get_articles_calls = 0
 
+    @staticmethod
+    def api_fields_from_article(_article):
+        return {}
+
     def insert_relevant_article(self, **kwargs):
         self.insert_calls.append(kwargs)
 
@@ -99,6 +103,8 @@ def make_processor(score: float, threshold: float = 0.5) -> ArticleProcessor:
     processor.max_relevance_score = 0.0
     processor.error_count = 0
     processor.context_message = {"role": "system", "content": "test"}
+    processor.enable_llm_guardrail = False
+    processor.cancelled = False
     return processor
 
 
@@ -114,9 +120,10 @@ async def test_process_article_returns_article_with_score_when_relevant():
     assert result.article is not None
     assert result.article["relevance_score"] == 0.9
     assert processor.article_manager.insert_calls[0]["relevance_score"] == 0.9
-    assert processor.article_manager.processing_results == [
-        {"raw_article_id": 1, "relevance_score": 0.9, "status": "relevant"}
-    ]
+    stored = processor.article_manager.processing_results[0]
+    assert stored["raw_article_id"] == 1
+    assert stored["relevance_score"] == 0.9
+    assert stored["status"] == "relevant"
 
 
 @pytest.mark.asyncio
@@ -130,7 +137,8 @@ async def test_process_article_returns_none_when_irrelevant():
     assert result.status == "irrelevant"
     assert result.article is None
     assert processor.article_manager.insert_calls == []
-    assert processor.article_manager.processing_results == [
-        {"raw_article_id": 2, "relevance_score": 0.1, "status": "irrelevant"}
-    ]
+    stored = processor.article_manager.processing_results[0]
+    assert stored["raw_article_id"] == 2
+    assert stored["relevance_score"] == 0.1
+    assert stored["status"] == "irrelevant"
 

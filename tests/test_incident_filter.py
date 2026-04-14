@@ -74,3 +74,9 @@ class TestIncidentFilter:
         assert has_enf is True
         assert has_ph is False
 
+    def test_theft_with_investigation_sent_to_llm(self):
+        text = "Customs investigation into theft of prescription diabetes medications"
+        skip, score = should_skip_llm("probe", text)
+        assert skip is False
+        assert score is None
+

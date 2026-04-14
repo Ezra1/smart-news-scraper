@@ -13,6 +13,7 @@ class ArticleAnalysisMixin:
         self.relevant = 0
         self.irrelevant = 0
         self.max_relevance_score = 0.0
+        self.error_count = 0
 
     def analyze_results(self) -> Dict[str, Any]:
         """Analyze article processing results and provide statistics."""

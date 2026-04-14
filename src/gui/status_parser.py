@@ -19,7 +19,10 @@ class ArticleProgress:
 
 @dataclass
 class ArticleCounts:
+    """fetched: cumulative sum from per-query progress (pre run-level URL dedup)."""
+
     fetched: Optional[int] = None
+    fetched_run_unique: Optional[int] = None
 
 
 @dataclass
@@ -45,6 +48,7 @@ class StatusParser:
 
     TERM_PATTERN = re.compile(r"Processing term\s+(\d+)\s*/\s*(\d+):\s*(.+)")
     ARTICLES_FOUND_PATTERN = re.compile(r"\((\d+)\s+articles\s+found\)")
+    COMPLETED_FETCH_PATTERN = re.compile(r"completed fetch:\s*(\d+)\s+articles\b", re.IGNORECASE)
     FRACTION_PATTERN = re.compile(r"(\d+)\s*/\s*(\d+)")
 
     def parse(
@@ -70,6 +74,10 @@ class StatusParser:
             update.counts.fetched = fetched
             if update.term_progress and update.term_progress.articles_found is None:
                 update.term_progress.articles_found = fetched
+
+        completed_fetch = self._extract_completed_fetch_unique_count(message)
+        if completed_fetch is not None:
+            update.counts.fetched_run_unique = completed_fetch
 
         if self._is_analysis_message(normalized):
             update.analysis_started = True
@@ -130,6 +138,16 @@ class StatusParser:
     def _extract_fetched_count(self, message: str) -> Optional[int]:
         """Pull the '(N articles found)' count from fetch messages."""
         match = self.ARTICLES_FOUND_PATTERN.search(message)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+
+    def _extract_completed_fetch_unique_count(self, message: str) -> Optional[int]:
+        """Parse 'Completed fetch: N articles ...' for post run-dedup URL total."""
+        match = self.COMPLETED_FETCH_PATTERN.search(message)
         if not match:
             return None
         try:

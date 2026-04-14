@@ -81,17 +81,55 @@ def migrate_database(db_path: str):
         # Copy data from cleaned_articles to relevant_articles if cleaned_articles exists
         if cleaned_exists:
             logger.info("Copying data from cleaned_articles to relevant_articles...")
-            
-            # Get column names from cleaned_articles
+
             cursor.execute("PRAGMA table_info(cleaned_articles)")
-            columns = [column[1] for column in cursor.fetchall()]
-            column_names = ", ".join(columns)
-            
-            # Copy data
-            cursor.execute(f"""
-                INSERT OR IGNORE INTO relevant_articles ({column_names})
-                SELECT {column_names} FROM cleaned_articles
-            """)
+            pragma_rows = cursor.fetchall()
+            cleaned_column_order = [row[1] for row in pragma_rows]
+            cleaned_columns_lower = {name.lower() for name in cleaned_column_order}
+
+            # Legacy cleaned_articles often lacks source, url, and published_at required by
+            # relevant_articles. A naive column-wise INSERT yields zero rows (NOT NULL / UNIQUE).
+            legacy_shape = (
+                {"title", "content"}.issubset(cleaned_columns_lower)
+                and "url" not in cleaned_columns_lower
+                and "source" not in cleaned_columns_lower
+            )
+            if legacy_shape:
+                id_col = "id" if "id" in cleaned_columns_lower else None
+                has_rs = "relevance_score" in cleaned_columns_lower
+                raw_expr = id_col if id_col else "NULL"
+                score_sql = "COALESCE(relevance_score, 0.0)" if has_rs else "0.0"
+                key_expr = id_col if id_col else "rowid"
+                cursor.execute(
+                    f"""
+                    INSERT OR IGNORE INTO relevant_articles (
+                        raw_article_id,
+                        relevance_score,
+                        title,
+                        content,
+                        source,
+                        url,
+                        published_at
+                    )
+                    SELECT
+                        {raw_expr},
+                        {score_sql},
+                        COALESCE(title, ''),
+                        COALESCE(content, ''),
+                        'legacy_migration',
+                        'migrated://cleaned-articles/' || CAST({key_expr} AS TEXT),
+                        CURRENT_TIMESTAMP
+                    FROM cleaned_articles
+                    """
+                )
+            else:
+                column_names = ", ".join(cleaned_column_order)
+                cursor.execute(
+                    f"""
+                    INSERT OR IGNORE INTO relevant_articles ({column_names})
+                    SELECT {column_names} FROM cleaned_articles
+                    """
+                )
             conn.commit()
             
             # Check how many rows were copied

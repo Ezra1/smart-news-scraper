@@ -15,6 +15,12 @@ class DummyConfigManager:
     def get(self, key, default=None):
         values = {
             "QUERY_EXPANSION_ENABLED": False,
+            "QUERY_EXPANSION_USE_AI": False,
+            "QUERY_EXPANSION_VARIANTS_PER_TERM": 3,
+            "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 120,
+            "QUERY_EXPANSION_LANGUAGES": "en",
+            "MAXIMUM_RECALL_MODE": False,
+            "HIGH_RECALL_MODE": True,
             "REQUEST_BUDGET_MODE": "aggressive",
             "REQUEST_BUDGET_PER_RUN": 100,
             "RELEVANCE_THRESHOLD": 0.7,
@@ -91,7 +97,7 @@ class TestPipelineManagerCallbacks:
         status_cb.assert_has_calls(
             [
                 call("Starting article fetch...", False, False, False),
-                call("Processing term 1/1: term [lang=en] (0 articles found)", False, False, False),
+                call("Processing term 1/1: term [lang=default] (0 articles found)", False, False, False),
                 call("Completed fetch: 1 articles from 1/1 terms", False, False, True),
             ],
             any_order=False,
@@ -131,7 +137,7 @@ class TestPipelineManagerCallbacks:
         status_cb.assert_has_calls(
             [
                 call("Starting article fetch...", False, False, False),
-                call("Processing term 1/1: term [lang=en] (0 articles found)", False, False, False),
+                call("Processing term 1/1: term [lang=default] (0 articles found)", False, False, False),
                 call("Completed fetch: 1 articles from 1/1 terms", False, False, True),
             ],
             any_order=False,
@@ -167,6 +173,16 @@ class TestPipelineManagerCallbacks:
             query_terms_by_id={1: "seized medicine"},
         )
 
+    def test_dedupe_articles_by_url_preserves_order(self):
+        rows = [
+            {"id": 1, "url": "https://example.com/News"},
+            {"id": 2, "url": "https://example.com/news"},
+            {"id": 3, "url": ""},
+            {"id": 4, "title": "no-url"},
+        ]
+        out = PipelineManager._dedupe_articles_by_url(rows)
+        assert [a["id"] for a in out] == [1, 3, 4]
+
     def test_fetch_articles_empty_terms_short_circuits(self):
         status_cb = MagicMock()
         manager = PipelineManager(
@@ -187,4 +203,50 @@ class TestPipelineManagerCallbacks:
             ],
             any_order=False,
         )
+
+    def test_fetch_metrics_include_expansion_diagnostics(self):
+        manager = PipelineManager(
+            db_manager=DummyDBManager(),
+            config_manager=DummyConfigManager(),
+            scraper=DummyScraper([{"id": 1, "url": "https://example.com/a", "root_term": "term"}]),
+            validator=DummyValidator(),
+        )
+
+        result = asyncio.run(manager.fetch_articles(["term"]))
+
+        assert result
+        assert manager._last_fetch_meta["expansion_diagnostics"]["ai_attempts"] == 0
+        assert manager._last_fetch_meta["top_roots_by_fetch_count"] == [{"term": "term", "count": 1}]
+
+    def test_execute_pipeline_emits_funnel_rates_and_top_relevant_roots(self):
+        manager = PipelineManager(
+            db_manager=DummyDBManager(),
+            config_manager=DummyConfigManager(),
+            scraper=DummyScraper([{"id": 1, "url": "https://example.com/a", "root_term": "counterfeit medicine"}]),
+            validator=DummyValidator(),
+        )
+        manager.filter_candidates = Mock(
+            return_value=[{"id": 1, "url": "https://example.com/a", "root_term": "counterfeit medicine"}]
+        )
+        manager.processor = type("DummyProcessor", (), {"RELEVANCE_THRESHOLD": 0.0})()
+
+        async def fake_analyze(_):
+            return type(
+                "Analysis",
+                (),
+                {
+                    "relevant_articles": [{"id": 1, "root_term": "counterfeit medicine"}],
+                    "analyzed_count": 1,
+                    "error_count": 0,
+                },
+            )()
+
+        manager.analyze_articles = fake_analyze
+
+        run_result = asyncio.run(manager.execute_pipeline([{"id": 10, "term": "counterfeit medicine"}]))
+
+        assert run_result.run_metrics["funnel_rates"]["fetch_to_relevant"] == 1.0
+        assert run_result.run_metrics["top_roots_by_relevant_count"] == [
+            {"term": "counterfeit medicine", "count": 1}
+        ]
 

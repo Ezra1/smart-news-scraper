@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-04-14
+### Added
+- GUI navigation rework: **Overview**, **Run & pipeline**, Workspace, **Diagnostics**, and Results, with shared theming (`src/gui/theme.py`, `section_card.py`, `constants.py`).
+- **Overview** dashboard and **Run & pipeline** view with last-run metrics formatting (`overview_dashboard.py`, `run_pipeline_view.py`, `run_metrics_format.py`).
+- **Diagnostics** view for log tailing and troubleshooting (`diagnostics_view.py`).
+- **Date range** control for runs (`date_range_widget.py`).
+- `PipelineRunResult` / `AnalysisPhaseResult` (`pipeline_result.py`) and structured `run_metrics` from `PipelineManager` for GUI observability.
+
+### Changed
+- Large `qt_gui.py` refactor to compose the new pages; status parsing and pipeline wiring updated accordingly.
+- News fetch, query expansion, OpenAI relevance processing, logging, config, and database layers updated to support the above (see git history for detail).
+
 ## [2.2.0] - 2026-04-10
 ### Added
 - Configuration tab: language selection as wrapping chip buttons (`FlowLayout`) instead of a single row of checkboxes.

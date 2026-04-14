@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -44,10 +44,14 @@ def processor_factory(fake_client):
         processor = ArticleProcessor.__new__(ArticleProcessor)
         processor.RELEVANCE_THRESHOLD = threshold
         processor.client = fake_client(score)
-        processor.rate_limiter = Mock(wait_if_needed=Mock(), wait_if_needed_async=Mock())
+        processor.rate_limiter = Mock(
+            wait_if_needed=Mock(),
+            wait_if_needed_async=AsyncMock(return_value=None),
+        )
         processor.semaphore = asyncio.Semaphore(1)
         processor.article_manager = Mock()
         processor.article_manager.insert_relevant_article = Mock()
+        processor.article_manager.api_fields_from_article = Mock(return_value={})
         processor.db_manager = Mock()
         processor.db_manager.execute_query = Mock(return_value=[])
         processor.relevant = 0
@@ -56,6 +60,8 @@ def processor_factory(fake_client):
         processor.max_relevance_score = 0.0
         processor.error_count = 0
         processor.context_message = {"role": "system", "content": "test context"}
+        processor.enable_llm_guardrail = False
+        processor.cancelled = False
         return processor
 
     return _make

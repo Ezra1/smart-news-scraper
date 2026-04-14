@@ -62,11 +62,15 @@ DEFAULT_CONFIG = {
     "NEWS_API_DAILY_LIMIT": 100,
     "NEWS_API_REQUESTS_PER_SECOND": 1,
     "NEWS_API_PAGE_LIMIT": 50,
-    "FETCH_MAX_PAGES_PER_QUERY": 5,
+    "FETCH_MAX_PAGES_PER_QUERY": 10,
+    "FETCH_MAX_PAGES_PER_QUERY_HIGH_RECALL": 80,
+    "FETCH_MAX_ARTICLES_PER_QUERY": 2000,
+    "FETCH_CONSECUTIVE_SHORT_PAGES_TO_STOP": 0,
+    "FETCH_MAX_ARTICLES_PER_RUN": 15000,
     "NEWS_API_LANGUAGE": "en",
     "NEWS_SOURCE_ALLOWLIST": "",
     "NEWS_SOURCE_BLOCKLIST": "",
-    "NEWS_API_MIN_BODY_LENGTH": 600,
+    "NEWS_API_MIN_BODY_LENGTH": 450,
     "NEWS_API_ENABLE_URL_FALLBACK": True,
     "NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS": 15,
     "NEWS_API_URL_FALLBACK_MAX_CONCURRENCY": 8,
@@ -78,22 +82,28 @@ DEFAULT_CONFIG = {
     "PRELLM_REQUIRE_INCIDENT_SIGNAL": False,
     "PRELLM_DEDUP_BY_URL": True,
     "PRELLM_DEDUP_BY_TITLE": True,
-    "PRELLM_TOP_K_PER_TERM": 100,
+    "PRELLM_TOP_K_PER_TERM": 2000,
     "PRELLM_STAGE3_ENABLED": False,
     "PRELLM_LOG_DROPS": True,
-    "PRELLM_ENABLE_LLM_GUARDRAIL": True,
+    "PRELLM_ENABLE_LLM_GUARDRAIL": False,
     "PRELLM_FILTER_PRESET": "more_permissive",
     "PRELLM_TOPIC_OVERRIDES": {},
-    "OPENAI_REQUESTS_PER_MINUTE": 60,
+    "OPENAI_REQUESTS_PER_MINUTE": 300,
+    "OPENAI_MAX_CONCURRENT_REQUESTS": 24,
+    "OPENAI_RELEVANCE_MAX_TOKENS": 2048,
+    "OPENAI_RELEVANCE_MAX_TOKENS_RETRY": 4096,
+    "OPENAI_RELEVANCE_CONTENT_MAX_CHARS": 12000,
+    "OPENAI_RELEVANCE_METADATA_MAX_CHARS": 800,
     "RELEVANCE_THRESHOLD": 0.7,
     "QUERY_EXPANSION_ENABLED": True,
     "QUERY_EXPANSION_USE_AI": True,
-    "QUERY_EXPANSION_VARIANTS_PER_TERM": 3,
-    "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 120,
+    "QUERY_EXPANSION_VARIANTS_PER_TERM": 10,
+    "QUERY_EXPANSION_MAX_TOTAL_QUERIES": 800,
     "QUERY_EXPANSION_LANGUAGES": "en,es,fr,pt,ar,ru,zh,hi",
     "HIGH_RECALL_MODE": True,
+    "MAXIMUM_RECALL_MODE": True,
     "REQUEST_BUDGET_MODE": "aggressive",
-    "REQUEST_BUDGET_PER_RUN": 200,
+    "REQUEST_BUDGET_PER_RUN": 2000,
     "DATE_RANGE_MODE": "preset",
     "DATE_RANGE_PRESET": "Last 7 days",
     "DATE_RANGE_AFTER": "",
@@ -168,6 +178,10 @@ class ConfigManager:
         self.config_path = self.get_config_path()
         self.keys_path = str(Path(self.config_path).parent / ".api_keys")
         self._encryption_key = self._get_encryption_key()
+        self.config = self._load_config()
+
+    def reload_from_disk(self) -> None:
+        """Reload merged config from JSON, encrypted keys, and environment (same rules as startup)."""
         self.config = self._load_config()
 
     def get_config_path(self) -> str:
@@ -278,6 +292,10 @@ class ConfigManager:
             "RELEVANCE_THRESHOLD": float,
             "NEWS_API_PAGE_LIMIT": int,
             "FETCH_MAX_PAGES_PER_QUERY": int,
+            "FETCH_MAX_PAGES_PER_QUERY_HIGH_RECALL": int,
+            "FETCH_MAX_ARTICLES_PER_QUERY": int,
+            "FETCH_CONSECUTIVE_SHORT_PAGES_TO_STOP": int,
+            "FETCH_MAX_ARTICLES_PER_RUN": int,
             "NEWS_API_MIN_BODY_LENGTH": int,
             "NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS": int,
             "NEWS_API_URL_FALLBACK_MAX_CONCURRENCY": int,
@@ -289,6 +307,7 @@ class ConfigManager:
             "QUERY_EXPANSION_VARIANTS_PER_TERM": int,
             "QUERY_EXPANSION_MAX_TOTAL_QUERIES": int,
             "REQUEST_BUDGET_PER_RUN": int,
+            "OPENAI_MAX_CONCURRENT_REQUESTS": int,
         }
         bool_keys = {
             "NEWS_API_ENABLE_URL_FALLBACK",
@@ -302,6 +321,7 @@ class ConfigManager:
             "QUERY_EXPANSION_ENABLED",
             "QUERY_EXPANSION_USE_AI",
             "HIGH_RECALL_MODE",
+            "MAXIMUM_RECALL_MODE",
         }
         
         env_config = {}
@@ -509,6 +529,11 @@ class ConfigManager:
                 logger.error("OPENAI_REQUESTS_PER_MINUTE must be positive")
                 return False
 
+            openai_conc = int(self.config.get("OPENAI_MAX_CONCURRENT_REQUESTS", 24))
+            if openai_conc < 1 or openai_conc > 64:
+                logger.error("OPENAI_MAX_CONCURRENT_REQUESTS must be between 1 and 64")
+                return False
+
             news_page_limit = int(self.config.get("NEWS_API_PAGE_LIMIT", 50))
             if news_page_limit <= 0:
                 logger.error("NEWS_API_PAGE_LIMIT must be positive")
@@ -516,6 +541,19 @@ class ConfigManager:
             max_pages_per_query = int(self.config.get("FETCH_MAX_PAGES_PER_QUERY", 5))
             if max_pages_per_query <= 0:
                 logger.error("FETCH_MAX_PAGES_PER_QUERY must be positive")
+                return False
+            max_pages_high = int(self.config.get("FETCH_MAX_PAGES_PER_QUERY_HIGH_RECALL", 20))
+            if max_pages_high <= 0:
+                logger.error("FETCH_MAX_PAGES_PER_QUERY_HIGH_RECALL must be positive")
+                return False
+            if int(self.config.get("FETCH_MAX_ARTICLES_PER_QUERY", 1)) <= 0:
+                logger.error("FETCH_MAX_ARTICLES_PER_QUERY must be positive")
+                return False
+            if int(self.config.get("FETCH_CONSECUTIVE_SHORT_PAGES_TO_STOP", 0)) < 0:
+                logger.error("FETCH_CONSECUTIVE_SHORT_PAGES_TO_STOP must be >= 0")
+                return False
+            if int(self.config.get("FETCH_MAX_ARTICLES_PER_RUN", 1)) <= 0:
+                logger.error("FETCH_MAX_ARTICLES_PER_RUN must be positive")
                 return False
 
             news_min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 0))

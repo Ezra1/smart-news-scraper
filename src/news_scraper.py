@@ -32,6 +32,10 @@ HTTP_BAD_REQUEST = 400
 HTTP_TOO_MANY_REQUESTS = 429
 THENEWSAPI_HOST = "thenewsapi.com"
 DEFAULT_THENEWSAPI_BASE_URL = "https://api.thenewsapi.com/v1/news"
+# TheNewsAPI documents a maximum of 20,000 results addressable via offset = (page-1)*limit.
+THENEWSAPI_MAX_RESULTS_WINDOW = 20000
+# TheNewsAPI documents a maximum page size of 50 for list endpoints.
+THENEWSAPI_MAX_PAGE_SIZE = 50
 
 
 class NewsArticleScraper:
@@ -63,8 +67,29 @@ class NewsArticleScraper:
         self.min_requests_per_second = float(config_manager.get("NEWS_API_MIN_REQUESTS_PER_SECOND", 0.2) or 0.2)
         self.rate_limit_headroom = float(config_manager.get("NEWS_API_RATE_LIMIT_HEADROOM", 0.90) or 0.90)
         self._resume_requests_at = 0.0
-        self.articles_count = int(self.config.get("NEWS_API_PAGE_LIMIT", 50))
-        self.max_pages_per_query = int(self.config.get("FETCH_MAX_PAGES_PER_QUERY", MAX_ARTICLE_PAGES))
+        configured_page_limit = max(1, int(self.config.get("NEWS_API_PAGE_LIMIT", 50)))
+        self.configured_news_api_page_limit = configured_page_limit
+        self.articles_count = min(configured_page_limit, THENEWSAPI_MAX_PAGE_SIZE)
+        if configured_page_limit > THENEWSAPI_MAX_PAGE_SIZE:
+            logger.warning(
+                "[FETCH] NEWS_API_PAGE_LIMIT=%s exceeds TheNewsAPI max page size %s; "
+                "using effective_limit=%s for requests and pagination stop logic",
+                configured_page_limit,
+                THENEWSAPI_MAX_PAGE_SIZE,
+                self.articles_count,
+            )
+        self.max_pages_per_query = max(1, int(self.config.get("FETCH_MAX_PAGES_PER_QUERY", MAX_ARTICLE_PAGES)))
+        self.max_pages_per_query_high_recall = max(
+            1, int(self.config.get("FETCH_MAX_PAGES_PER_QUERY_HIGH_RECALL", 20))
+        )
+        self.fetch_max_articles_per_query = max(
+            1, int(self.config.get("FETCH_MAX_ARTICLES_PER_QUERY", 500))
+        )
+        # 0 = never stop pagination solely because a non-empty page returned fewer than limit rows.
+        # N>=1 = stop after N consecutive such "short" pages (legacy single-page behavior: set to 1).
+        self.fetch_consecutive_short_pages_to_stop = max(
+            0, int(self.config.get("FETCH_CONSECUTIVE_SHORT_PAGES_TO_STOP", 0))
+        )
         self.min_body_length = int(self.config.get("NEWS_API_MIN_BODY_LENGTH", 600))
         self.enable_url_fallback = bool(self.config.get("NEWS_API_ENABLE_URL_FALLBACK", True))
         self.url_fallback_timeout_seconds = int(self.config.get("NEWS_API_URL_FALLBACK_TIMEOUT_SECONDS", 15))
@@ -79,10 +104,13 @@ class NewsArticleScraper:
         self.source_allowlist = self._parse_csv_list(self.config.get("NEWS_SOURCE_ALLOWLIST", ""))
         self.source_blocklist = self._parse_csv_list(self.config.get("NEWS_SOURCE_BLOCKLIST", ""))
         self._run_metrics: Dict[str, float] = {}
+        self._last_fetch_request_outcome = "ok"
         logger.info(
-            "Initialized TheNewsAPI scraper | api_url=%s lang=%s limit=%s",
+            "Initialized TheNewsAPI scraper | api_url=%s lang=%s "
+            "configured_page_limit=%s effective_page_limit=%s",
             self.api_url,
             self.language or "<any>",
+            self.configured_news_api_page_limit,
             self.articles_count,
         )
 
@@ -271,6 +299,17 @@ class NewsArticleScraper:
             logger.error("Error fetching articles for term '%s': %s", term, e)
             return []
 
+    @staticmethod
+    def _pagination_identity_key(article: Dict[str, Any]) -> str:
+        """Stable dedup key: URL when present, else title+source."""
+        url = str(article.get("url") or "").strip().lower()
+        if url:
+            return f"u:{url}"
+        title = str(article.get("title") or "").strip().lower()[:400]
+        source = extract_source_name(article.get("source"), default="") or ""
+        source_n = str(source).strip().lower()[:200]
+        return f"t:{title}|{source_n}"
+
     async def _fetch_articles_pages(
         self,
         term: str,
@@ -284,17 +323,201 @@ class NewsArticleScraper:
             logger.error("_fetch_articles_pages expected date_filters dict, got %s", type(date_filters).__name__)
             return []
 
+        effective_limit = max(1, int(self.articles_count))
+        root_term = term
+        language = str(self.language or "").strip() or "default"
+        if isinstance(query_spec, dict):
+            root_term = str(query_spec.get("root_term", term) or term).strip() or term
+            language = str(query_spec.get("language", self.language) or "").strip() or "default"
+
+        high_recall = bool(self.config.get("HIGH_RECALL_MODE", True))
+        base_pages = max(1, int(self.max_pages_per_query or MAX_ARTICLE_PAGES))
+        high_pages = max(1, int(self.max_pages_per_query_high_recall or base_pages))
+        max_pages_cfg = high_pages if high_recall else base_pages
+        api_cap_pages = max(1, THENEWSAPI_MAX_RESULTS_WINDOW // effective_limit)
+        max_pages = min(max_pages_cfg, api_cap_pages)
+
+        max_unique = max(1, int(self.config.get("FETCH_MAX_ARTICLES_PER_QUERY", self.fetch_max_articles_per_query)))
+
+        logger.info(
+            "[FETCH] Start query term=%r root=%r lang=%r configured_limit=%s effective_limit=%s "
+            "max_pages=%s per_query_cap=%s short_page_streak_stop=%s",
+            term,
+            root_term,
+            language,
+            self.configured_news_api_page_limit,
+            effective_limit,
+            max_pages,
+            max_unique,
+            self.fetch_consecutive_short_pages_to_stop,
+        )
+
+        seen_keys: set[str] = set()
         all_articles: List[Dict] = []
-        max_pages = max(1, int(self.max_pages_per_query or MAX_ARTICLE_PAGES))
+        total_duplicate_rows = 0
+        pages_fetched = 0
+        stop_reason: Optional[str] = None
+        consecutive_short_nonempty = 0
+
         for page in range(1, max_pages + 1):
             await self._wait_for_rate_limit()
+            logger.info(
+                "[FETCH] Request page=%s/%s limit=%s term=%r lang=%r root=%r "
+                "configured_limit=%s effective_limit=%s max_pages=%s per_query_cap=%s",
+                page,
+                max_pages,
+                effective_limit,
+                term,
+                language,
+                root_term,
+                self.configured_news_api_page_limit,
+                effective_limit,
+                max_pages,
+                max_unique,
+            )
             payload = self._build_articles_payload(term, page, date_filters, query_spec=query_spec)
             page_articles = await self._make_api_request(payload)
+            pages_fetched = page
+            rows_returned = len(page_articles) if isinstance(page_articles, list) else 0
+
             if not page_articles:
+                if self.rate_limited:
+                    stop_reason = "rate_limited"
+                elif self._last_fetch_request_outcome != "ok":
+                    stop_reason = "request_error"
+                else:
+                    stop_reason = "empty_page"
+                logger.info(
+                    "[FETCH] Stop reason=%s page=%s returned=%s effective_limit=%s term=%r outcome=%s",
+                    stop_reason,
+                    page,
+                    rows_returned,
+                    effective_limit,
+                    term,
+                    self._last_fetch_request_outcome,
+                )
                 break
-            all_articles.extend(page_articles)
-            if len(page_articles) < self.articles_count:
+
+            new_count = 0
+            duplicate_rows_this_page = 0
+            for raw in page_articles:
+                if not isinstance(raw, dict):
+                    continue
+                key = self._pagination_identity_key(raw)
+                if key in seen_keys:
+                    duplicate_rows_this_page += 1
+                    continue
+                seen_keys.add(key)
+                all_articles.append(raw)
+                new_count += 1
+                if len(all_articles) >= max_unique:
+                    break
+
+            total_duplicate_rows += duplicate_rows_this_page
+            logger.info(
+                "[FETCH] Page %s/%s term=%r root=%r lang=%r configured_limit=%s effective_limit=%s "
+                "per_query_cap=%s → returned=%s new_unique=%s duplicate_rows=%s cumulative_unique=%s/%s",
+                page,
+                max_pages,
+                term,
+                root_term,
+                language,
+                self.configured_news_api_page_limit,
+                effective_limit,
+                max_unique,
+                rows_returned,
+                new_count,
+                duplicate_rows_this_page,
+                len(all_articles),
+                max_unique,
+            )
+
+            if new_count == 0 and page_articles:
+                # Every row on this page was a duplicate of an earlier page; further pages are
+                # unlikely to help unless the API window shifts. Tradeoff: rare APIs that repeat
+                # overlap then introduce new URLs would stop early.
+                stop_reason = "duplicate_only_page"
+                logger.info(
+                    "[FETCH] Stop reason=%s page=%s/%s returned=%s new_unique=%s duplicate_rows=%s "
+                    "cumulative_unique=%s/%s term=%r (duplicate-only page)",
+                    stop_reason,
+                    page,
+                    max_pages,
+                    rows_returned,
+                    new_count,
+                    duplicate_rows_this_page,
+                    len(all_articles),
+                    max_unique,
+                    term,
+                )
                 break
+            if len(all_articles) >= max_unique:
+                stop_reason = "per_query_cap_reached"
+                logger.info(
+                    "[FETCH] Stop reason=%s page=%s/%s cumulative_unique=%s per_query_cap=%s term=%r",
+                    stop_reason,
+                    page,
+                    max_pages,
+                    len(all_articles),
+                    max_unique,
+                    term,
+                )
+                break
+
+            if rows_returned >= effective_limit:
+                consecutive_short_nonempty = 0
+            else:
+                consecutive_short_nonempty += 1
+
+            if (
+                self.fetch_consecutive_short_pages_to_stop > 0
+                and consecutive_short_nonempty >= self.fetch_consecutive_short_pages_to_stop
+            ):
+                stop_reason = "short_page_streak"
+                logger.info(
+                    "[FETCH] Stop reason=%s page=%s/%s streak=%s threshold=%s returned=%s "
+                    "effective_limit=%s term=%r (consecutive short non-empty pages; "
+                    "set FETCH_CONSECUTIVE_SHORT_PAGES_TO_STOP=0 to disable)",
+                    stop_reason,
+                    page,
+                    max_pages,
+                    consecutive_short_nonempty,
+                    self.fetch_consecutive_short_pages_to_stop,
+                    rows_returned,
+                    effective_limit,
+                    term,
+                )
+                break
+        else:
+            stop_reason = "max_pages_reached"
+            logger.info(
+                "[FETCH] Stop reason=%s last_page=%s unique_total=%s max_pages=%s term=%r",
+                stop_reason,
+                pages_fetched,
+                len(all_articles),
+                max_pages,
+                term,
+            )
+
+        if stop_reason is None:
+            stop_reason = "unknown"
+
+        logger.info(
+            "[FETCH] Completed query term=%r root=%r lang=%r configured_limit=%s effective_limit=%s "
+            "max_pages=%s pages_fetched=%s unique_articles_kept=%s duplicate_rows_total=%s "
+            "per_query_cap=%s final_stop_reason=%r",
+            term,
+            root_term,
+            language,
+            self.configured_news_api_page_limit,
+            effective_limit,
+            max_pages,
+            pages_fetched,
+            len(all_articles),
+            total_duplicate_rows,
+            max_unique,
+            stop_reason,
+        )
         return all_articles
 
     def _build_articles_payload(
@@ -320,14 +543,18 @@ class NewsArticleScraper:
 
     async def _make_api_request(self, payload: dict) -> List[dict]:
         """Make request to TheNewsAPI /all endpoint."""
+        self._last_fetch_request_outcome = "ok"
         if not isinstance(payload, dict):
             logger.error("_make_api_request expected dict payload, got %s", type(payload).__name__)
+            self._last_fetch_request_outcome = "request_error"
             return []
         if not isinstance(self.api_key, str) or not self.api_key.strip():
             logger.error("TheNewsAPI token is missing; cannot fetch articles")
+            self._last_fetch_request_outcome = "request_error"
             return []
         if not self.api_url:
             logger.error("TheNewsAPI URL is not configured")
+            self._last_fetch_request_outcome = "request_error"
             return []
 
         try:
@@ -343,22 +570,28 @@ class NewsArticleScraper:
                                 api_error,
                                 payload,
                             )
+                            self._last_fetch_request_outcome = "api_error"
                             return []
+                        self._last_fetch_request_outcome = "ok"
                         return self._extract_articles_from_response(data)
                     if response.status in (HTTP_PAYMENT_REQUIRED, HTTP_TOO_MANY_REQUESTS):
                         self._set_resume_from_headers(response.headers)
                         logger.warning("Rate limit/plan limit exceeded for TheNewsAPI")
                         self.rate_limited = True
+                        self._last_fetch_request_outcome = "rate_limited"
                         return []
                     if response.status == HTTP_UNAUTHORIZED:
                         logger.error("Invalid TheNewsAPI token")
+                        self._last_fetch_request_outcome = "request_error"
                         return []
                     if response.status == HTTP_FORBIDDEN:
                         logger.error("TheNewsAPI endpoint access restricted (403)")
+                        self._last_fetch_request_outcome = "request_error"
                         return []
                     if response.status == HTTP_BAD_REQUEST:
                         response_text = await response.text()
                         logger.error("Malformed TheNewsAPI parameters: %s", response_text)
+                        self._last_fetch_request_outcome = "request_error"
                         return []
                     response_text = await response.text()
                     logger.error(
@@ -367,12 +600,15 @@ class NewsArticleScraper:
                         payload,
                         response_text,
                     )
+                    self._last_fetch_request_outcome = "request_error"
                     return []
         except asyncio.TimeoutError:
             logger.error("TheNewsAPI request timed out")
+            self._last_fetch_request_outcome = "timeout"
             return []
         except Exception as e:
             logger.error("TheNewsAPI request error: %s", e)
+            self._last_fetch_request_outcome = "request_error"
             return []
 
     def _extract_results_list(self, data: Dict[str, Any], nested_key: str) -> List[Dict[str, Any]]:

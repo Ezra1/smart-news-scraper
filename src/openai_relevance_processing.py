@@ -5,7 +5,7 @@ import asyncio
 import logging  # Add this import for logging
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
-from openai import OpenAI, RateLimitError
+from openai import OpenAI, LengthFinishReasonError, RateLimitError
 from pydantic import BaseModel
 
 from src.logger_config import setup_logging
@@ -56,7 +56,9 @@ class ArticleProcessor(ArticleAnalysisMixin):
         self.client = OpenAI(api_key=self.OPENAI_API_KEY)
         requests_per_minute = self.config_manager.get("OPENAI_REQUESTS_PER_MINUTE", 60)
         self.rate_limiter = RateLimiter(requests_per_minute=requests_per_minute)
-        self.semaphore = asyncio.Semaphore(5)  # Limit concurrent requests
+        max_concurrent = int(self.config_manager.get("OPENAI_MAX_CONCURRENT_REQUESTS", 24) or 24)
+        max_concurrent = max(1, min(64, max_concurrent))
+        self.semaphore = asyncio.Semaphore(max_concurrent)
         
         # Initialize tracking variables
         self.relevant = 0
@@ -72,7 +74,21 @@ class ArticleProcessor(ArticleAnalysisMixin):
         
         # Add batch size configuration
         self.batch_size = self.config_manager.get("BATCH_SIZE", 10)
-        self.enable_llm_guardrail = bool(self.config_manager.get("PRELLM_ENABLE_LLM_GUARDRAIL", True))
+        maximum_recall = bool(self.config_manager.get("MAXIMUM_RECALL_MODE", False))
+        self.enable_llm_guardrail = bool(
+            self.config_manager.get("PRELLM_ENABLE_LLM_GUARDRAIL", True)
+        ) and not maximum_recall
+        self.relevance_max_tokens = max(256, int(self.config_manager.get("OPENAI_RELEVANCE_MAX_TOKENS", 2048)))
+        self.relevance_max_tokens_retry = max(
+            self.relevance_max_tokens,
+            int(self.config_manager.get("OPENAI_RELEVANCE_MAX_TOKENS_RETRY", 4096)),
+        )
+        self.relevance_content_max_chars = max(
+            500, int(self.config_manager.get("OPENAI_RELEVANCE_CONTENT_MAX_CHARS", 12000))
+        )
+        self.relevance_metadata_max_chars = max(
+            0, int(self.config_manager.get("OPENAI_RELEVANCE_METADATA_MAX_CHARS", 800))
+        )
         
         # Store context message from config first, with optional explicit override.
         self.context_message = context_message or self.config_manager.get_context_message()
@@ -99,8 +115,75 @@ class ArticleProcessor(ArticleAnalysisMixin):
     def _build_error_result(self, article_id: Any, error: Exception) -> ProcessingResult:
         """Return a uniform processing error payload while tracking metrics."""
         logger.exception("Error processing article ID %s", article_id if article_id is not None else "")
-        self.error_count += 1
+        try:
+            self.error_count += 1
+        except AttributeError:
+            self.error_count = 1
         return ProcessingResult(article=None, status="error", error=str(error))
+
+    @staticmethod
+    def _cap_llm_text(value: Any, max_len: int) -> str:
+        if max_len <= 0:
+            return ""
+        text = str(value or "").strip()
+        if len(text) <= max_len:
+            return text
+        suffix = "\n[...truncated for LLM...]"
+        keep = max_len - len(suffix)
+        if keep <= 0:
+            return text[:max_len]
+        return text[:keep] + suffix
+
+    def _format_article_for_llm(self, article: Dict[str, Any], title: str, content: str) -> str:
+        content_cap = max(500, int(getattr(self, "relevance_content_max_chars", 12000)))
+        meta_cap = int(getattr(self, "relevance_metadata_max_chars", 800))
+        meta_cap = meta_cap if meta_cap > 0 else 2000
+        return (
+            f"Raw Article ID: {article.get('id', '')}\n"
+            f"Title: {self._cap_llm_text(title, meta_cap)}\n"
+            f"Content: {self._cap_llm_text(content, content_cap)}\n"
+            f"URL: {self._cap_llm_text(article.get('url', ''), meta_cap)}\n"
+            f"Event URI: {self._cap_llm_text(article.get('event_uri', ''), meta_cap)}\n"
+            f"Event Type URI: {self._cap_llm_text(article.get('event_type_uri', ''), meta_cap)}\n"
+            f"Incident Sentence: {self._cap_llm_text(article.get('incident_sentence', ''), meta_cap)}\n"
+            f"Location Metadata: {self._cap_llm_text(article.get('location', ''), meta_cap)}\n"
+            f"Categories Metadata: {self._cap_llm_text(article.get('categories', ''), meta_cap)}\n"
+            f"Concepts Metadata: {self._cap_llm_text(article.get('concepts', ''), meta_cap)}\n"
+            f"Extracted Dates Metadata: {self._cap_llm_text(article.get('extracted_dates', ''), meta_cap)}"
+        )
+
+    def _openai_parse_relevance(self, user_content: str) -> RatedArticle:
+        """Call OpenAI structured parse with length-limit retry."""
+        primary = max(256, int(getattr(self, "relevance_max_tokens", 2048)))
+        retry_cap = max(primary, int(getattr(self, "relevance_max_tokens_retry", 4096)))
+        last_error: Optional[Exception] = None
+        for max_out in (primary, retry_cap):
+            try:
+                response = self.client.beta.chat.completions.parse(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": user_content}],
+                    max_tokens=max_out,
+                    temperature=0,
+                    response_format=RatedArticle,
+                )
+                if not response.choices or not response.choices[0].message:
+                    raise RuntimeError("empty response from OpenAI")
+                parsed = response.choices[0].message.parsed
+                if parsed is None:
+                    raise RuntimeError("empty parsed response from OpenAI")
+                return parsed
+            except LengthFinishReasonError as exc:
+                last_error = exc
+                logger.warning(
+                    "OpenAI relevance parse truncated (max_tokens=%s); retrying if possible",
+                    max_out,
+                )
+                if max_out >= retry_cap:
+                    break
+                continue
+        if last_error:
+            raise last_error
+        raise RuntimeError("OpenAI relevance parse failed without specific error")
 
     def _record_processing_outcome(
         self,
@@ -164,7 +247,9 @@ class ArticleProcessor(ArticleAnalysisMixin):
             "published_at": article.get("published_at", ""),
             "relevance_score": relevance_score,
         }
-        insert_kwargs.update(self.article_manager.api_fields_from_article(article))
+        api_fields = getattr(self.article_manager, "api_fields_from_article", None)
+        if callable(api_fields):
+            insert_kwargs.update(api_fields(article))
         if include_extended_fields:
             insert_kwargs.update(
                 {
@@ -236,7 +321,7 @@ class ArticleProcessor(ArticleAnalysisMixin):
             return ProcessingResult(article=None, status="error", error="client not initialized")
 
         try:
-            if self.cancelled:
+            if getattr(self, "cancelled", False):
                 logger.info("Article processing cancelled before starting item")
                 self.error_count += 1
                 return ProcessingResult(article=None, status="error", error="cancelled")
@@ -287,7 +372,7 @@ class ArticleProcessor(ArticleAnalysisMixin):
                 content,
                 query_language=str(article.get("query_language", "") or ""),
             )
-            if not self.enable_llm_guardrail:
+            if not getattr(self, "enable_llm_guardrail", True):
                 skip_llm = False
             if skip_llm:
                 relevance_score = float(default_score if default_score is not None else 0.0)
@@ -321,49 +406,13 @@ class ArticleProcessor(ArticleAnalysisMixin):
             try:
                 async with self.semaphore:
                     article["incident_level"] = True
-                    article_text = (
-                        f"Raw Article ID: {article.get('id', '')}\n"
-                        f"Title: {title}\n"
-                        f"Content: {content}\n"
-                        f"URL: {article.get('url', '')}\n"
-                        f"Event URI: {article.get('event_uri', '')}\n"
-                        f"Event Type URI: {article.get('event_type_uri', '')}\n"
-                        f"Incident Sentence: {article.get('incident_sentence', '')}\n"
-                        f"Location Metadata: {article.get('location', '')}\n"
-                        f"Categories Metadata: {article.get('categories', '')}\n"
-                        f"Concepts Metadata: {article.get('concepts', '')}\n"
-                        f"Extracted Dates Metadata: {article.get('extracted_dates', '')}"
-                    )
-                    
-                    # Process article through OpenAI API
-                    response = self.client.beta.chat.completions.parse(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": self._render_user_prompt(article_text),
-                            }
-                        ],
-                        max_tokens=250,
-                        temperature=0,
-                        response_format=RatedArticle
-                    )
+                    article_text = self._format_article_for_llm(article, title, content)
+                    user_prompt = self._render_user_prompt(article_text)
+                    try:
+                        parsed_response = self._openai_parse_relevance(user_prompt)
+                    except Exception as exc:
+                        return self._build_error_result(article.get("id", ""), exc)
 
-                    if not response.choices or not response.choices[0].message:
-                        logger.error(f"No response received for article ID: {article.get('id', '')}")
-                        self.error_count += 1
-                        return ProcessingResult(
-                            article=None,
-                            status="error",
-                            error="empty response from OpenAI",
-                        )
-
-                    # Extract relevance score from response
-                    parsed_response = response.choices[0].message.parsed
-                    if parsed_response is None:
-                        logger.error("Parsed OpenAI response is empty for article ID: %s", article.get("id", ""))
-                        self.error_count += 1
-                        return ProcessingResult(article=None, status="error", error="empty parsed response")
                     relevance_score = parsed_response.relevance_score
                     explanation = getattr(parsed_response, "explanation", "")
                     event = getattr(parsed_response, "event", "")
@@ -461,35 +510,45 @@ class ArticleProcessor(ArticleAnalysisMixin):
         if not articles:
             return []
 
-        try:
-            total_to_process = len(articles)
-            remaining = total_to_process
-            results: List[ProcessingResult] = []
-            
-            for i in range(0, total_to_process, self.batch_size):
-                batch = articles[i:i + self.batch_size]
-                
-                # Process articles one by one and emit progress after each item
-                for article in batch:
-                    if self.cancelled:
-                        logger.info("Batch processing cancelled by user")
-                        break
-                    result = await self.process_article(article, remaining)
-                    results.append(result)
-                    remaining -= 1
+        total_to_process = len(articles)
+        remaining = total_to_process
+        results: List[ProcessingResult] = []
 
-                    processed_so_far = total_to_process - remaining
-                    if hasattr(self, 'progress_callback'):
-                        self.progress_callback(processed_so_far, total_to_process)
-                
-                if self.cancelled:
+        batch_size = max(1, int(getattr(self, "batch_size", 10)))
+        for i in range(0, total_to_process, batch_size):
+            batch = articles[i : i + batch_size]
+
+            for article in batch:
+                if getattr(self, "cancelled", False):
+                    logger.info("Batch processing cancelled by user")
                     break
-            
-            return results
-            
-        except Exception as e:
-            logger.exception("Error processing articles")
-            return []
+                try:
+                    result = await self.process_article(article, remaining)
+                except Exception as exc:
+                    logger.exception(
+                        "Unexpected error processing article id=%s",
+                        article.get("id") if isinstance(article, dict) else None,
+                    )
+                    try:
+                        self.error_count += 1
+                    except AttributeError:
+                        self.error_count = 1
+                    result = ProcessingResult(
+                        article=None,
+                        status="error",
+                        error=str(exc),
+                    )
+                results.append(result)
+                remaining -= 1
+
+                processed_so_far = total_to_process - remaining
+                if hasattr(self, "progress_callback"):
+                    self.progress_callback(processed_so_far, total_to_process)
+
+            if getattr(self, "cancelled", False):
+                break
+
+        return results
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)  # Fix logging setup

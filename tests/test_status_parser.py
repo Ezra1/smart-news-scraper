@@ -51,6 +51,14 @@ class TestStatusParser:
         assert status.rate_limited is True
         assert status.fetch_complete is False
 
+    def test_completed_fetch_sets_run_unique_count(self):
+        status = self.parser.parse(
+            "Completed fetch: 42 articles from 5/10 terms", False, False, True
+        )
+
+        assert status.fetch_complete is True
+        assert status.counts.fetched_run_unique == 42
+
 
 class TestProcessingState:
     def test_update_from_status_sets_term_and_processed(self):
