@@ -2520,7 +2520,8 @@ class NewsScraperGUI(QMainWindow):
             "relevance_score",
         ]
         fieldnames = base_fields + ["event | location | actor"]
-        with open(file_path, "w", newline="", encoding="utf-8") as f:
+        # Use UTF-8 BOM so spreadsheet apps (e.g. Excel) detect Unicode reliably.
+        with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
             for result in results:
